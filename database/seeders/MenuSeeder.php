@@ -47,6 +47,11 @@ class MenuSeeder extends Seeder
                     'default_service_weekdays' => $entry['service_days'],
                     'position' => $position,
                     'is_active' => true,
+                    // ⚠️ PLACEHOLDER PHOTOGRAPHY, served from the storefront's own public/
+                    // directory. Freely-licensed stock of the right dish so the card layouts
+                    // can be judged with real food in them — NOT her food, and it must not
+                    // reach a customer. See ../mefs/public/menu/ATTRIBUTION.md.
+                    'image_path' => $entry['image'] ?? null,
                 ],
             );
 
@@ -120,6 +125,7 @@ class MenuSeeder extends Seeder
             // ── Meals: the weekly rotation ────────────────────────────────────
             [
                 'slug' => 'waakye',
+                'image' => '/menu/waakye.jpg',
                 'name' => 'Waakye',
                 'description' => 'Rice and beans, cooked the long way.',
                 'category' => MenuCategory::Meal->value,
@@ -128,6 +134,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'chinkafa',
+                'image' => '/menu/chinkafa.jpg',
                 'name' => 'Chinkafa',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [1],
@@ -135,6 +142,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'toolo-beef-braised-rice',
+                'image' => '/menu/beefBraisedRice.jpg',
                 'name' => 'Toolo Beef Braised Rice',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [2],
@@ -142,6 +150,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'chicken-franks-fried-rice',
+                'image' => '/menu/friedRice.jpg',
                 'name' => 'Chicken Franks Fried Rice',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [2],
@@ -149,6 +158,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'plantain-etor',
+                'image' => '/menu/etor.jpg',
                 'name' => 'Plantain Etor',
                 'description' => 'Mashed plantain. The platter comes loaded.',
                 'category' => MenuCategory::Meal->value,
@@ -161,6 +171,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'goat-jollof',
+                'image' => '/menu/goatJollof.jpg',
                 'name' => 'Goat Jollof',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [4],
@@ -168,6 +179,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'jollof-with-chicken',
+                'image' => '/menu/chickenJollof.jpg',
                 'name' => 'Jollof with Chicken',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [4, 5],
@@ -175,6 +187,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'beef-jollof',
+                'image' => '/menu/beefJollof.jpg',
                 'name' => 'Beef Jollof',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [4],
@@ -182,6 +195,7 @@ class MenuSeeder extends Seeder
             ],
             [
                 'slug' => 'gari-fotor',
+                'image' => '/menu/gariFotor.jpg',
                 'name' => 'Gari Fotor',
                 'category' => MenuCategory::Meal->value,
                 'service_days' => [5],
@@ -191,6 +205,7 @@ class MenuSeeder extends Seeder
             // ── Pantry: shelf-stable, no rotation slot, ships nationwide ──────
             [
                 'slug' => 'jollof-base',
+                'image' => '/menu/jollofBase.jpg',
                 'name' => 'Jollof base',
                 'description' => 'Tasty jollof made easy peasy. Shelf-stable, ready when you are.',
                 'category' => MenuCategory::Pantry->value,
@@ -208,6 +223,7 @@ class MenuSeeder extends Seeder
             [
                 // ⚠️ INVENTED PRODUCT.
                 'slug' => 'shito',
+                'image' => '/menu/shito.jpg',
                 'name' => 'Shito',
                 'description' => 'Black pepper sauce. Keeps for months in the fridge.',
                 'category' => MenuCategory::Pantry->value,
@@ -220,6 +236,7 @@ class MenuSeeder extends Seeder
             [
                 // ⚠️ INVENTED PRODUCT.
                 'slug' => 'kelewele-spice',
+                'image' => '/menu/kelewele.jpg',
                 'name' => 'Kelewele spice',
                 'description' => 'The rub. Bring your own plantain.',
                 'category' => MenuCategory::Pantry->value,

@@ -98,10 +98,28 @@ class MenuItem extends Model
 
     // ── Derived ───────────────────────────────────────────────────────────────
 
-    /** Absolute URL, or null so the card renders its branded fallback. */
+    /**
+     * URL for the card, or null so it renders the branded fallback.
+     *
+     * A path already rooted at `/` is served by the STOREFRONT's own `public/` directory —
+     * that is how the placeholder photography in ../mefs/public/menu stays wired up during
+     * development. Anything else is an upload on the API's public disk.
+     *
+     * ⚠️ Those placeholders are freely-licensed stock, not her food, and must not reach a
+     * customer. See ../mefs/public/menu/ATTRIBUTION.md. Every one is replaced by a real
+     * upload before launch, at which point the `/`-rooted branch stops being used.
+     */
     public function imageUrl(): ?string
     {
-        return $this->image_path === null ? null : Storage::disk('public')->url($this->image_path);
+        if ($this->image_path === null) {
+            return null;
+        }
+
+        if (str_starts_with($this->image_path, '/')) {
+            return $this->image_path;
+        }
+
+        return Storage::disk('public')->url($this->image_path);
     }
 
     /**
