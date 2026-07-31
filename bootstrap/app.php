@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\EnsureStaffAbility;
 use App\Http\Responses\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -25,7 +26,12 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api/v1',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias([
+            // Staff routes use BOTH: `auth:sanctum` proves who you are, `staff` proves the
+            // token was minted by the staff login path (brief Law 3). A customer OTP token
+            // satisfies the first and must never satisfy the second.
+            'staff' => EnsureStaffAbility::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         /*

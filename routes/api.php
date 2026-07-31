@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Auth\StaffAuthController;
+use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\HealthController;
-use App\Http\Responses\ApiResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -16,21 +16,27 @@ use Illuminate\Support\Facades\Route;
 |
 | 1. Declare LITERAL routes before WILDCARD ones. `orders/export` must come before
 |    `orders/{order}` or the wildcard eats it (brief trap §10.7).
-| 2. Every unauthenticated route gets a rate limit (brief Phase 10). Public routes are
-|    grouped below so it stays obvious which ones those are.
+| 2. Every unauthenticated route gets a rate limit (brief Phase 10). The public group
+|    below carries one, so a route added there inherits it rather than being forgotten.
 |
 */
 
 // ── Public ────────────────────────────────────────────────────────────────────
 Route::get('health', HealthController::class)->name('health');
 
-// ── Authenticated ─────────────────────────────────────────────────────────────
-// `auth:sanctum` alone is not enough for staff routes — a customer OTP token satisfies it.
-// Staff groups additionally require the `staff` token ability (brief Law 3), which arrives
-// in M1 along with the login endpoints.
-Route::middleware('auth:sanctum')->group(function (): void {
-    Route::get('me', fn (Request $request) => ApiResponse::success(
-        $request->user(),
-        'Current user',
-    ))->name('me');
+Route::middleware('throttle:60,1')->group(function (): void {
+    Route::get('checkout-config', CheckoutConfigController::class)->name('checkout-config');
+
+    // Login is unauthenticated by definition, and is the route most worth guessing at.
+    // The controller additionally throttles per login+IP so one attacker cannot lock a
+    // real user out by guessing at them.
+    Route::post('staff/login', [StaffAuthController::class, 'login'])->name('staff.login');
+});
+
+// ── Staff ─────────────────────────────────────────────────────────────────────
+// `auth:sanctum` alone is NOT enough — a customer OTP token satisfies it. The `staff`
+// middleware requires the ability minted only by the staff login path, and fails closed.
+Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
+    Route::post('staff/logout', [StaffAuthController::class, 'logout'])->name('staff.logout');
+    Route::get('staff/me', [StaffAuthController::class, 'me'])->name('staff.me');
 });
