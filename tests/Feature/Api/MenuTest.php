@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api;
 
+use App\Enums\CycleStatus;
 use App\Models\MenuItem;
 use App\Models\MenuOption;
+use App\Services\Ordering\CycleBuilder;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -18,6 +20,20 @@ final class MenuTest extends TestCase
     {
         parent::setUp();
         $this->seed(DatabaseSeeder::class);
+
+        // The day menu now resolves from a cycle's dish matrix, so these tests need one.
+        // Pre-filled from the weekday rotation, which is why the expectations below still
+        // read as "Wednesday's dishes" — see DayMenuFromCycleTest for the matrix diverging
+        // from the template on purpose.
+        app(CycleBuilder::class)
+            ->create([
+                'name' => 'Week of 5 Aug',
+                'service_start_date' => '2026-08-05',
+                'service_end_date' => '2026-08-12',
+                'orders_open_at' => '2026-08-01T00:00:00Z',
+                'orders_close_at' => '2026-08-04T18:00:00Z',
+            ])
+            ->update(['status' => CycleStatus::Published->value]);
     }
 
     // ── Public reads ──────────────────────────────────────────────────────────
@@ -48,23 +64,28 @@ final class MenuTest extends TestCase
             ]);
     }
 
-    public function test_the_day_menu_only_returns_dishes_cooked_that_weekday(): void
+    public function test_the_day_menu_returns_the_dishes_ticked_for_that_day(): void
     {
-        // Wednesday = ISO 3.
+        // 5 Aug is a Wednesday; the matrix was pre-filled from each dish's rotation.
         $slugs = collect($this->getJson('/api/v1/menu/day/2026-08-05')->json('data.meals'))
             ->pluck('slug');
 
-        $this->assertContains('waakye', $slugs);         // service_days [1, 3]
-        $this->assertContains('plantain-etor', $slugs);  // service_days [3]
-        $this->assertNotContains('gari-fotor', $slugs);  // service_days [5]
+        $this->assertContains('waakye', $slugs);         // usual days [1, 3]
+        $this->assertContains('plantain-etor', $slugs);  // usual days [3]
+        $this->assertNotContains('gari-fotor', $slugs);  // usual days [5]
     }
 
-    public function test_a_day_with_nothing_on_the_rotation_returns_an_empty_list_not_an_error(): void
+    /**
+     * A day inside the cycle with nothing ticked is an empty menu — a real answer the
+     * storefront renders a message for. Distinct from a date no cycle covers, which reports
+     * `has_cycle: false` (see DayMenuFromCycleTest).
+     */
+    public function test_a_day_inside_the_cycle_with_no_dishes_returns_an_empty_menu(): void
     {
-        // 2026-08-08 is a Saturday. She cooks Mon-Fri, so there is genuinely nothing —
-        // and "nothing" is a valid answer the storefront renders a message for.
+        // 8 Aug is a Saturday. She cooks Mon-Fri, so the pre-filled matrix ticks nothing.
         $this->getJson('/api/v1/menu/day/2026-08-08')
             ->assertOk()
+            ->assertJsonPath('data.has_cycle', true)
             ->assertJsonPath('data.meals', []);
     }
 
