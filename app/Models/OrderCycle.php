@@ -113,6 +113,21 @@ class OrderCycle extends Model
         $this->save();
     }
 
+    /**
+     * Draft → published. The moment a customer can see it at all.
+     *
+     * A method rather than a fillable `published_at`, for the same reason as
+     * `applyOverride()`: going live is a deliberate act, never something that rides in on a
+     * request body alongside a name change.
+     */
+    public function publish(): void
+    {
+        $this->status = CycleStatus::Published;
+        $this->published_at = now();
+
+        $this->save();
+    }
+
     /** Every date in the cooking window, inclusive of both ends. */
     public function serviceDates(): array
     {

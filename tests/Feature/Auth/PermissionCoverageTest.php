@@ -36,18 +36,28 @@ final class PermissionCoverageTest extends TestCase
      * @var list<string>
      */
     private const DELIBERATELY_UNUSED = [
-        // M2 — menu.
-        'menu.view', 'menu.manage', 'menu.price',
-        // M3 — cycles.
-        'cycles.view', 'cycles.manage', 'cycles.override',
         // M4/M5 — ordering and the back office.
         'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.refund',
         // M6 — money.
         'payments.view', 'analytics.view',
-        // M7 — the rest.
-        'customers.view', 'staff.view', 'staff.manage', 'settings.manage', 'audit.view',
+        // M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)
+        'customers.view', 'settings.manage', 'audit.view',
     ];
 
+    /**
+     * Matches on the ENUM reference (`Permission::MenuView`), not the string value.
+     *
+     * Two reasons, both learned the hard way in this very test:
+     *
+     *  - Matching string literals MISSED every real usage, because the controllers pass the
+     *    enum case. A coverage test that under-detects reports working permissions as
+     *    unenforced, and people learn to ignore it.
+     *  - It also produced a FALSE PASS: `cycles.override` looked referenced because a route
+     *    is *named* `cycles.override`. A route name is not an authorisation check.
+     *
+     * Requiring the enum is stricter and correct — a permission referenced only as a bare
+     * string is a smell anyway, since it dodges the type system.
+     */
     public function test_every_permission_is_referenced_or_deliberately_listed(): void
     {
         $source = $this->sourceText();
@@ -55,11 +65,7 @@ final class PermissionCoverageTest extends TestCase
         $unreferenced = [];
 
         foreach (Permission::cases() as $permission) {
-            // The enum's own declaration does not count as a reference.
-            $uses = substr_count($source, "'{$permission->value}'")
-                + substr_count($source, "\"{$permission->value}\"");
-
-            if ($uses === 0) {
+            if (substr_count($source, "Permission::{$permission->name}") === 0) {
                 $unreferenced[] = $permission->value;
             }
         }
@@ -85,7 +91,7 @@ final class PermissionCoverageTest extends TestCase
 
         $stale = array_values(array_filter(
             self::DELIBERATELY_UNUSED,
-            fn (string $name) => substr_count($source, "'{$name}'") > 0,
+            fn (string $value) => substr_count($source, 'Permission::'.Permission::from($value)->name) > 0,
         ));
 
         $this->assertSame([], $stale, sprintf(

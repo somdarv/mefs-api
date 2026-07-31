@@ -29,6 +29,18 @@ final class TimestampTimezoneTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * PHP's side. Accra is UTC+0 all year with no DST, so server time is kitchen time —
+     * Africa/Accra would be equivalent today and would silently stop being equivalent if
+     * Ghana ever adopted DST.
+     */
+    public function test_the_application_timezone_is_utc(): void
+    {
+        $this->assertSame('UTC', config('app.timezone'));
+        $this->assertSame('UTC', date_default_timezone_get());
+        $this->assertSame('UTC', CarbonImmutable::now()->timezoneName);
+    }
+
     public function test_the_connection_session_timezone_is_utc(): void
     {
         $this->assertSame(

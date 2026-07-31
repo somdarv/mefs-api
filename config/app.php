@@ -59,9 +59,24 @@ return [
     | Application Timezone
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | ⚠️ UTC IS A REQUIREMENT HERE, NOT A DEFAULT. Hardcoded, not env-driven.
+    |
+    | Accra is UTC+0 all year with no DST, so server time IS kitchen time and every
+    | date calculation in the system is plain UTC arithmetic — cutoffs, cycle windows,
+    | prep dates, the lot. The storefront does the same, deliberately, in
+    | ../mefs/src/lib/preorder/service-days.ts.
+    |
+    | Setting this to Africa/Accra would be equivalent TODAY and would silently stop
+    | being equivalent if Ghana ever adopted DST. Setting it to anything else shifts
+    | every ordering deadline in the business.
+    |
+    | Two other places must agree, and both are pinned:
+    |   - the Postgres SESSION timezone (config/database.php) — otherwise timestamptz
+    |     columns are written in the DB server's locale, which cost an hour per row
+    |     through British Summer Time before it was caught
+    |   - the storefront's date arithmetic
+    |
+    | TimestampTimezoneTest fails if any of this drifts.
     |
     */
 
