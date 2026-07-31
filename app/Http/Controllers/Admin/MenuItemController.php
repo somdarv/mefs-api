@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\MenuCategory;
 use App\Enums\Permission;
+use App\Http\Controllers\Concerns\AuthorizesPermissions;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\MenuItemResource;
 use App\Http\Responses\ApiResponse;
@@ -31,6 +32,8 @@ use Illuminate\Validation\Rule;
  */
 final class MenuItemController extends Controller
 {
+    use AuthorizesPermissions;
+
     public function index(Request $request): JsonResponse
     {
         $this->authorizePermission($request, Permission::MenuView);
@@ -234,14 +237,5 @@ final class MenuItemController extends Controller
         $item->delete();
 
         return ApiResponse::success(null, "{$item->name} retired");
-    }
-
-    private function authorizePermission(Request $request, Permission $permission): void
-    {
-        abort_unless(
-            $request->user()->can($permission->value),
-            403,
-            "This action requires the {$permission->value} permission.",
-        );
     }
 }

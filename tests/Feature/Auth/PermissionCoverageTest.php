@@ -36,8 +36,9 @@ final class PermissionCoverageTest extends TestCase
      * @var list<string>
      */
     private const DELIBERATELY_UNUSED = [
-        // M4/M5 — ordering and the back office.
-        'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.refund',
+        // M6 — refunds arrive with settlement reconciliation. The other four order
+        // permissions are enforced by Admin\OrderController as of M4.
+        'orders.refund',
         // M6 — money.
         'payments.view', 'analytics.view',
         // M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)

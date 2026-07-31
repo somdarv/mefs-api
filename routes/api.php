@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Admin\CycleController as AdminCycleController;
 use App\Http\Controllers\Admin\MenuItemController;
+use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\CheckoutConfigController;
+use App\Http\Controllers\CheckoutSessionController;
 use App\Http\Controllers\CycleController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MenuController;
+use App\Http\Controllers\OrderTrackingController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -45,6 +48,28 @@ Route::middleware('throttle:60,1')->group(function (): void {
     // The controller additionally throttles per login+IP so one attacker cannot lock a
     // real user out by guessing at them.
     Route::post('staff/login', [StaffAuthController::class, 'login'])->name('staff.login');
+
+    /*
+     * ── The basket, and the one customer-facing way it becomes an order ───────
+     *
+     * Unauthenticated because most customers are guests, and identified by the pair
+     * (URL token, `X-Guest-Session` header). `confirm` calls `OrderCreator`, the same
+     * service admin manual entry calls — see the controller docblock for why that is
+     * the whole point of this file (brief §5.8).
+     */
+    Route::post('checkout-sessions', [CheckoutSessionController::class, 'store'])->name('checkout-sessions.store');
+    Route::get('checkout-sessions/{token}', [CheckoutSessionController::class, 'show'])->name('checkout-sessions.show');
+    Route::patch('checkout-sessions/{token}', [CheckoutSessionController::class, 'update'])->name('checkout-sessions.update');
+    Route::post('checkout-sessions/{token}/confirm', [CheckoutSessionController::class, 'confirm'])->name('checkout-sessions.confirm');
+
+    /*
+     * "Where is my order?" — by RANDOM TOKEN, never by order number or id.
+     *
+     * The gateway redirects someone with no account here, so it cannot sit behind a login;
+     * and an unauthenticated route keyed on a sequence is one a stranger can walk to read
+     * off the day's volume and every customer's phone number (brief §5.6).
+     */
+    Route::get('orders/{token}', OrderTrackingController::class)->name('orders.track');
 });
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
@@ -80,5 +105,19 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
 
         Route::patch('cycles/{cycle}/days/{day}', [AdminCycleController::class, 'updateDay'])->name('cycles.days.update');
         Route::put('cycles/{cycle}/days/{day}/items', [AdminCycleController::class, 'updateDayItems'])->name('cycles.days.items');
+
+        /*
+         * Orders. `store` is MANUAL ENTRY and it goes through `OrderCreator` like the
+         * customer path does — there is deliberately no second creation route, which is
+         * the trap the brief spends §5.8 and §10.9 on.
+         *
+         * `orders/{order}` is last: any literal like a future `orders/export` must be
+         * declared above it or the wildcard eats it (brief trap §10.7).
+         */
+        Route::get('orders', [AdminOrderController::class, 'index'])->name('orders.index');
+        Route::post('orders', [AdminOrderController::class, 'store'])->name('orders.store');
+        Route::post('orders/{order}/status', [AdminOrderController::class, 'transition'])->name('orders.status');
+        Route::post('orders/{order}/reject-cancellation', [AdminOrderController::class, 'rejectCancellation'])->name('orders.reject-cancellation');
+        Route::get('orders/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
     });
 });

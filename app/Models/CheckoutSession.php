@@ -34,9 +34,6 @@ class CheckoutSession extends Model
         'expires_at',
     ];
 
-    /** The token is minted here, never supplied. */
-    protected $hidden = [];
-
     protected function casts(): array
     {
         return [

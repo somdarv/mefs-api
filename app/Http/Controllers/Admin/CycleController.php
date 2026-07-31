@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\CycleOverride;
 use App\Enums\CycleStatus;
 use App\Enums\Permission;
+use App\Http\Controllers\Concerns\AuthorizesPermissions;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CycleResource;
 use App\Http\Responses\ApiResponse;
@@ -32,6 +33,8 @@ use Illuminate\Validation\ValidationException;
  */
 final class CycleController extends Controller
 {
+    use AuthorizesPermissions;
+
     public function __construct(private readonly CycleBuilder $builder) {}
 
     public function index(Request $request): JsonResponse
@@ -295,14 +298,5 @@ final class CycleController extends Controller
 
             throw $e;
         }
-    }
-
-    private function authorizePermission(Request $request, Permission $permission): void
-    {
-        abort_unless(
-            $request->user()->can($permission->value),
-            403,
-            "This action requires the {$permission->value} permission.",
-        );
     }
 }

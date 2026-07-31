@@ -8,7 +8,6 @@ use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Models\Branch;
 use App\Models\CycleDay;
-use App\Models\MenuOption;
 use App\Models\Order;
 use App\Models\SystemSetting;
 use App\Support\GhanaPhone;
@@ -49,6 +48,7 @@ final class OrderCreator
 {
     public function __construct(
         private readonly CycleGate $gate,
+        private readonly BasketPricer $pricer,
         private readonly PriceCalculator $prices,
         private readonly PortionLedger $ledger,
         private readonly OrderNumberSequence $numbers,
@@ -75,7 +75,7 @@ final class OrderCreator
             throw OrderRefused::invalidContact('A delivery needs an address.');
         }
 
-        $priced = $this->price($draft->lines);
+        $priced = $this->pricer->price($draft->lines);
         $branch = $this->resolveBranch();
 
         // ── The lock, and everything that has to happen under it ──────────────
@@ -249,63 +249,6 @@ final class OrderCreator
         }
 
         return null;
-    }
-
-    // ── Looking up what things cost ───────────────────────────────────────────
-
-    /**
-     * Basket references in, priced snapshots out.
-     *
-     * One query for every option, then a lookup — not a query per line. And the price comes
-     * from the row, never from the request: a client that could send `unit_price` could
-     * send `1`.
-     *
-     * @param  list<BasketLine>  $lines
-     * @return list<PricedLine>
-     *
-     * @throws OrderRefused
-     */
-    private function price(array $lines): array
-    {
-        $ids = array_values(array_unique(array_map(fn (BasketLine $l) => $l->menuItemOptionId, $lines)));
-
-        $options = MenuOption::query()
-            ->with('menuItem')
-            ->whereIn('id', $ids)
-            ->where('is_active', true)
-            ->get()
-            ->keyBy('id');
-
-        $priced = [];
-
-        foreach ($lines as $line) {
-            /** @var MenuOption|null $option */
-            $option = $options->get($line->menuItemOptionId);
-
-            // A soft-deleted option, a deactivated one, or an id that never existed. All
-            // three are "no longer on sale" to the customer, and none of them may be
-            // guessed at — an order line pointing at nothing is a receipt nobody can honour.
-            if ($option === null || $option->menuItem === null || ! $option->menuItem->is_active) {
-                throw OrderRefused::unknownOption($line->menuItemOptionId);
-            }
-
-            $item = $option->menuItem;
-
-            $priced[] = new PricedLine(
-                option: $option,
-                menuItemId: $item->id,
-                // The name as the customer saw it: "Waakye — large". Snapshot, not a join.
-                name: $item->name.($option->label === '' ? '' : ' — '.$option->label),
-                unitPrice: $option->price,
-                quantity: $line->quantity,
-                category: $item->category,
-                sizeLabel: $option->size_label,
-                variantKey: $option->variant_key,
-                notes: $line->notes,
-            );
-        }
-
-        return $priced;
     }
 
     // ── Derived server-side ───────────────────────────────────────────────────
