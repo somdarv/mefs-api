@@ -144,5 +144,18 @@ php artisan migrate
 
 ## Status
 
-**M0 in progress** — scaffold, envelope, `/api/v1/health`, CI. See the milestone table in
-the [frontend CLAUDE.md](../mefs/CLAUDE.md).
+**M0–M4 complete except payment.** See [../mefs/HANDOFF.md](../mefs/HANDOFF.md) for the
+current state and where to pick up, and the milestone table in the
+[frontend CLAUDE.md](../mefs/CLAUDE.md).
+
+`App\Services\Ordering` is where the rules live:
+
+| | |
+| --- | --- |
+| `CycleGate` | may someone order for this date, and why not |
+| `OrderCreator` | ⚠️ the **only** path from a basket to an order — customer confirm and admin manual entry both call it (§5.8) |
+| `OrderStatusMachine` | the **only** thing that moves an order; writes the timestamps and the audit row |
+| `BasketPricer` / `PriceCalculator` | the only place money is computed, for the quote and the order alike |
+| `PortionLedger` | the only thing that moves `cycle_day_items.portions_sold` |
+
+204 tests, zero failing. Not built: Paystack, the SMS driver, the scheduled hold-expiry job.
