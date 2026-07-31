@@ -97,6 +97,24 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+
+            /*
+             * ⚠️ PIN THE SESSION TIMEZONE. DO NOT REMOVE.
+             *
+             * Laravel serialises datetimes as 'Y-m-d H:i:s' with NO offset. Postgres then
+             * interprets that string, for a `timestamptz` column, in the SESSION timezone —
+             * which defaults to whatever the database server's locale happens to be.
+             *
+             * On this machine that default is Europe/London, so an 18:00 UTC cutoff was
+             * being stored as 17:00 UTC through August and 18:00 through January. Every
+             * ordering deadline, order timestamp and settlement date would silently shift by
+             * an hour for half the year, and the same code would behave differently on two
+             * developers' machines.
+             *
+             * Caught by CycleGateTest asserting the exact cutoff instant. A test that used
+             * relative offsets ("now plus two hours") would have passed throughout.
+             */
+            'timezone' => env('DB_TIMEZONE', 'UTC'),
         ],
 
         'sqlsrv' => [
