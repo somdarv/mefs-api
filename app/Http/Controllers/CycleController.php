@@ -71,6 +71,11 @@ final class CycleController extends Controller
         $state = $this->gate->check($cycle, $day, $now);
 
         return [
+            // ⚠️ The basket keys on THIS, not on the date. A checkout session binds to a
+            // cycle day id, and a date string cannot identify a day across two cycles — nor
+            // can the server accept one without re-resolving it, which is a lookup the
+            // client would then be able to get wrong.
+            'id' => $day->id,
             'date' => $day->date->toDateString(),
             'weekday' => $day->date->dayOfWeekIso,
             'short_label' => $day->date->format('D'),
