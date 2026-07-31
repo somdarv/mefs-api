@@ -23,8 +23,13 @@ class DatabaseSeeder extends Seeder
             SystemSettingSeeder::class,
         ]);
 
+        // The branch must exist before MenuSeeder, which attaches every dish to it.
         $this->seedBranch();
         $this->seedStaff();
+
+        $this->call([
+            MenuSeeder::class,
+        ]);
     }
 
     /**

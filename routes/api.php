@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\HealthController;
+use App\Http\Controllers\MenuController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -27,6 +29,12 @@ Route::get('health', HealthController::class)->name('health');
 Route::middleware('throttle:60,1')->group(function (): void {
     Route::get('checkout-config', CheckoutConfigController::class)->name('checkout-config');
 
+    // `menu/pantry` is LITERAL and `menu/day/{date}` is parameterised on a different
+    // segment, so they cannot collide — but keep the literal first regardless, because the
+    // day this file grows a `menu/{item}` the wildcard eats everything (brief trap §10.7).
+    Route::get('menu/pantry', [MenuController::class, 'pantry'])->name('menu.pantry');
+    Route::get('menu/day/{date}', [MenuController::class, 'day'])->name('menu.day');
+
     // Login is unauthenticated by definition, and is the route most worth guessing at.
     // The controller additionally throttles per login+IP so one attacker cannot lock a
     // real user out by guessing at them.
@@ -39,4 +47,16 @@ Route::middleware('throttle:60,1')->group(function (): void {
 Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
     Route::post('staff/logout', [StaffAuthController::class, 'logout'])->name('staff.logout');
     Route::get('staff/me', [StaffAuthController::class, 'me'])->name('staff.me');
+
+    Route::prefix('admin')->name('admin.')->group(function (): void {
+        // Menu. Note `options` and `image` are declared as sub-resources of {item}, so no
+        // literal-vs-wildcard hazard arises here.
+        Route::get('menu/items', [MenuItemController::class, 'index'])->name('menu.index');
+        Route::post('menu/items', [MenuItemController::class, 'store'])->name('menu.store');
+        Route::get('menu/items/{item}', [MenuItemController::class, 'show'])->name('menu.show');
+        Route::patch('menu/items/{item}', [MenuItemController::class, 'update'])->name('menu.update');
+        Route::delete('menu/items/{item}', [MenuItemController::class, 'destroy'])->name('menu.destroy');
+        Route::put('menu/items/{item}/options', [MenuItemController::class, 'syncOptions'])->name('menu.options');
+        Route::post('menu/items/{item}/image', [MenuItemController::class, 'uploadImage'])->name('menu.image');
+    });
 });

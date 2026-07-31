@@ -102,6 +102,12 @@ Paystack. Hosted checkout for the customer, webhook for truth.
 - **Admin-entered orders may hold a slot unpaid** until `slot_hold_expires_at`; a scheduled
   job then releases the capacity and flags the order. Customer-placed orders may not.
 
+## SMS
+
+SMSOnlineGH, behind a driver interface so the `log` driver can stand in locally and in CI —
+a test suite must never text a real customer. Messages: order confirmation, cutoff nudge,
+ready-for-collection.
+
 **Delivery fees are pass-through, not revenue.** She uses a third-party courier, so the fee
 is collected and handed over. `delivery_fee_collection` records who takes it, and every
 analytics query excludes pass-through fees. Counting them as income overstates every revenue
