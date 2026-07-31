@@ -56,9 +56,18 @@ class OrderCycle extends Model
         ];
     }
 
+    /**
+     * The day grid, each row carrying its own booked count.
+     *
+     * The count is on the RELATION rather than left to call sites, because every consumer
+     * of a day needs it — `CycleGate` weighs `capacity` against it — and a call site that
+     * forgets would fall through to a per-day query. One subquery here, once.
+     */
     public function days(): HasMany
     {
-        return $this->hasMany(CycleDay::class)->orderBy('date');
+        return $this->hasMany(CycleDay::class)
+            ->withCount(['orders as orders_placed_count' => fn ($q) => $q->holdingCapacity()])
+            ->orderBy('date');
     }
 
     public function overrideBy(): BelongsTo
@@ -136,15 +145,39 @@ class OrderCycle extends Model
             ->all();
     }
 
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class);
+    }
+
     /**
-     * Orders placed against this cycle.
+     * Orders placed against this cycle — what `CycleGate` weighs `order_capacity` against.
      *
-     * Currently zero — the orders table arrives in M4. Declared now, and read by CycleGate,
-     * so capacity is wired end to end from the start rather than retrofitted through the
-     * gate later.
+     * ⚠️ A MISSING COUNT IS NOT A ZERO.
+     *
+     * The fast path reads an eager-loaded `withCount`, which is how the day list avoids one
+     * query per day. But falling back to `?? 0` when nobody loaded it — which is what this
+     * did while the orders table was still empty — means any caller that forgets the
+     * `withCount` silently gets "nothing is booked" and the cap never binds. That is the
+     * shape of the original's stock-gate bugs exactly: absent data read as a safe answer.
+     *
+     * So the fallback is a real count. It costs a query on the paths that forgot to eager
+     * load, and it is never wrong.
      */
     public function getOrdersPlacedCountAttribute(): int
     {
-        return (int) ($this->attributes['orders_placed_count'] ?? 0);
+        if (array_key_exists('orders_placed_count', $this->attributes)) {
+            return (int) $this->attributes['orders_placed_count'];
+        }
+
+        return $this->exists ? $this->orders()->holdingCapacity()->count() : 0;
+    }
+
+    /** The eager-load every capacity-sensitive read should use. */
+    public function scopeWithCapacityCounts(Builder $query): Builder
+    {
+        return $query->withCount([
+            'orders as orders_placed_count' => fn ($q) => $q->holdingCapacity(),
+        ]);
     }
 }

@@ -53,11 +53,22 @@ class CycleDay extends Model
         return $this->hasMany(CycleDayItem::class)->orderBy('position')->orderBy('id');
     }
 
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'cycle_day_id');
+    }
+
     /**
-     * Orders for this date. Zero until M4 — see the note on OrderCycle.
+     * Orders for this date. Same rule as on OrderCycle, and the same reason: an
+     * eager-loaded count when there is one, a real query when there is not — never a `?? 0`
+     * that reads "nothing is booked" because a caller forgot the `withCount`.
      */
     public function getOrdersPlacedCountAttribute(): int
     {
-        return (int) ($this->attributes['orders_placed_count'] ?? 0);
+        if (array_key_exists('orders_placed_count', $this->attributes)) {
+            return (int) $this->attributes['orders_placed_count'];
+        }
+
+        return $this->exists ? $this->orders()->holdingCapacity()->count() : 0;
     }
 }

@@ -140,6 +140,20 @@ class SystemSettingSeeder extends Seeder
                 'is_public' => false,
                 'description' => 'How long an unpaid admin-entered order holds its slot.',
             ],
+
+            // The other half of departure #6, and the reason "a customer-placed order that
+            // is unpaid never holds a slot" is true rather than merely stated: an online
+            // order gets a PAYMENT WINDOW, not a hold. Leave Paystack without paying and
+            // the seat is released. Shorter than the manual hold on purpose — nobody needs
+            // two hours to finish a mobile-money prompt.
+            [
+                'key' => 'online_payment_window_minutes',
+                'value' => '30',
+                'cast' => 'int',
+                'group' => 'ordering',
+                'is_public' => false,
+                'description' => 'How long an unpaid customer order keeps its slot before release.',
+            ],
         ];
     }
 }
