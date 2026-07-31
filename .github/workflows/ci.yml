@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # PostgreSQL, never SQLite (brief §11.2). A green SQLite suite does not prove the
+    # Postgres path — SQLite folds LIKE case and cannot parse EXTRACT.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: mefs
+          POSTGRES_PASSWORD: mefs_dev_local
+          POSTGRES_DB: mefs_testing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mefs"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, pgsql, mbstring, bcmath, intl, zip
+          coverage: none
+
+      - name: Cache composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Lint (Pint)
+        run: vendor/bin/pint --test
+
+      - name: Migrate
+        run: php artisan migrate --force
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: mefs_testing
+          DB_USERNAME: mefs
+          DB_PASSWORD: mefs_dev_local
+
+      - name: Test
+        run: php artisan test
+        env:
+          DB_USERNAME: mefs
+          DB_PASSWORD: mefs_dev_local
