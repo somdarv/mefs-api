@@ -38,6 +38,13 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!--
+            A test suite must never text a real customer, and the guarantee is not that
+            somebody remembers to set an env var. Pinned here, and `AppServiceProvider`
+            falls back to the log driver anyway whenever credentials are missing.
+        -->
+        <env name="SMS_DRIVER" value="log"/>
+        <env name="SMSONLINEGH_API_KEY" value=""/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

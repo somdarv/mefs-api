@@ -148,10 +148,20 @@ class Order extends Model
     }
 
     /**
-     * Unpaid manual orders whose hold has run out (departure #6).
+     * Unpaid orders whose hold has run out (departure #6).
      *
      * The scheduled job reads exactly this, so "which orders have expired" has one
      * definition rather than one per caller.
+     *
+     * ⚠️ `received` ONLY, AND THAT IS THE WHOLE JUDGEMENT.
+     *
+     * Accepting an order is a commitment: she has looked at it and decided to cook it. If
+     * the hold then expires, cancelling would throw away food she is already planning —
+     * exactly the wrong direction for an automated job to be wrong in. An accepted order
+     * that never pays is a conversation, not a cron job.
+     *
+     * So the clock only ever releases a slot nobody has committed to. Everything past
+     * `received` is hers to chase.
      */
     public function scopeHoldExpired(Builder $query): Builder
     {
@@ -159,7 +169,7 @@ class Order extends Model
             ->where('hold_expired', false)
             ->whereNotNull('slot_hold_expires_at')
             ->where('slot_hold_expires_at', '<=', now())
-            ->whereNotIn('status', [OrderStatus::Cancelled->value, OrderStatus::Completed->value]);
+            ->where('status', OrderStatus::Received->value);
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────

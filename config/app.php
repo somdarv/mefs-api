@@ -17,6 +17,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The kitchen's line
+    |--------------------------------------------------------------------------
+    |
+    | Appears in SMS copy. Mirrors `appConfig.contact.phone` in the frontend — the
+    | two must agree, because a customer reading one and calling the other is a
+    | customer who does not reach her.
+    |
+    */
+
+    'kitchen_phone' => env('KITCHEN_PHONE', '+233241915464'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |

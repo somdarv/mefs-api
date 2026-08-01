@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Ordering;
 
 use App\Enums\OrderStatus;
+use App\Enums\OrderType;
 use App\Models\Order;
 use App\Models\OrderStatusChange;
 use App\Models\User;
+use App\Services\Sms\OrderNotifier;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -35,7 +37,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class OrderStatusMachine
 {
-    public function __construct(private readonly PortionLedger $ledger) {}
+    public function __construct(
+        private readonly PortionLedger $ledger,
+        private readonly OrderNotifier $notifier,
+    ) {}
 
     /**
      * Move an order to `$to`, or throw.
@@ -66,7 +71,7 @@ final class OrderStatusMachine
             throw IllegalTransition::wrongOrderType($to, $order);
         }
 
-        return DB::transaction(function () use ($order, $from, $to, $actor, $note): Order {
+        DB::transaction(function () use ($order, $from, $to, $actor, $note): Order {
             $order->status = $to;
 
             if ($column = $to->timestampColumn()) {
@@ -94,6 +99,49 @@ final class OrderStatusMachine
 
             return $order;
         });
+
+        // After the commit, for the same two reasons as in `OrderCreator`: a worker must not
+        // race the transaction, and a gateway timeout must never roll back a status change
+        // that has already happened.
+        $this->notify($order, $to);
+
+        return $order;
+    }
+
+    /**
+     * Which moves are worth a text.
+     *
+     * ⚠️ TWO OF TEN STATUSES, AND THE OMISSIONS ARE THE DECISION. `accepted` and `preparing`
+     * tell the customer nothing they can act on — she said yes, then she started cooking, on
+     * a day they already know about. A message per transition trains people to ignore the
+     * one that matters, which is "come and get it". She also pays per segment.
+     *
+     * ⚠️ AND EXACTLY ONE HANDOVER TEXT PER ORDER, which is why the state depends on the
+     * type:
+     *
+     *   pickup             `ready` — cooked IS collectable, and `ready_for_pickup` can only
+     *                      be reached from `ready`, so texting on both would send two
+     *   delivery/shipping  `out_for_delivery` — "on its way" at `ready` would be a lie; the
+     *                      food is cooked and still on the counter
+     *
+     * A delivery order taken straight from `ready` to `completed` gets no handover text.
+     * That path means she handed it over herself, and the customer was standing there.
+     */
+    private function notify(Order $order, OrderStatus $to): void
+    {
+        if ($to === OrderStatus::Cancelled) {
+            $this->notifier->cancelled($order);
+
+            return;
+        }
+
+        $handover = $order->order_type === OrderType::Pickup
+            ? OrderStatus::Ready
+            : OrderStatus::OutForDelivery;
+
+        if ($to === $handover) {
+            $this->notifier->ready($order);
+        }
     }
 
     /**

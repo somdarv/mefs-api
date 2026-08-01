@@ -10,6 +10,7 @@ use App\Models\Branch;
 use App\Models\CycleDay;
 use App\Models\Order;
 use App\Models\SystemSetting;
+use App\Services\Sms\OrderNotifier;
 use App\Support\GhanaPhone;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -53,6 +54,7 @@ final class OrderCreator
         private readonly PortionLedger $ledger,
         private readonly OrderNumberSequence $numbers,
         private readonly OrderStatusMachine $statuses,
+        private readonly OrderNotifier $notifier,
     ) {}
 
     /**
@@ -85,7 +87,7 @@ final class OrderCreator
         // at the same instant serialise: the second one re-reads a `portions_sold` that
         // already includes the first, and the gate refuses it. Without the lock they both
         // read 5, both pass, and the kitchen owes six portions from a pot of five.
-        return DB::transaction(function () use ($draft, $priced, $branch, $phone): Order {
+        $order = DB::transaction(function () use ($draft, $priced, $branch, $phone): Order {
             $day = $draft->type->requiresCycleDay()
                 ? $this->lockDay($draft)
                 : $this->refuseCycleDayOnShipping($draft);
@@ -153,6 +155,18 @@ final class OrderCreator
 
             return $order->load('items');
         });
+
+        // ⚠️ AFTER THE COMMIT, NEVER INSIDE IT.
+        //
+        // Two reasons, and the second is the one that bites. A queue worker can pick the job
+        // up before the transaction commits and find no order at all — the classic
+        // dispatch-inside-transaction race. And a gateway timeout inside the transaction
+        // would roll back a sale that has already succeeded, which is the worst possible
+        // trade: the customer is charged nothing, the slot is freed, and the only thing that
+        // actually went wrong was a text message.
+        $this->notifier->confirmed($order);
+
+        return $order;
     }
 
     // ── The gate ──────────────────────────────────────────────────────────────
