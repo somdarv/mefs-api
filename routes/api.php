@@ -11,7 +11,9 @@ use App\Http\Controllers\CheckoutSessionController;
 use App\Http\Controllers\CycleController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MenuController;
+use App\Http\Controllers\OrderPaymentController;
 use App\Http\Controllers\OrderTrackingController;
+use App\Http\Controllers\PaystackWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -70,7 +72,36 @@ Route::middleware('throttle:60,1')->group(function (): void {
      * off the day's volume and every customer's phone number (brief §5.6).
      */
     Route::get('orders/{token}', OrderTrackingController::class)->name('orders.track');
+
+    /*
+     * Paying for an order that already exists, and the return journey.
+     *
+     * ⚠️ `verify` exists because A BROWSER REDIRECT IS NOT PROOF OF PAYMENT. Paystack
+     * sends the customer back to /orders/{token} and anyone can type that URL, so the
+     * page asks the server, which asks Paystack with our secret key. It complements the
+     * webhook rather than replacing it — both funnel into one PaymentRecorder, so a
+     * race between them is a no-op instead of a double credit.
+     *
+     * Declared AFTER `orders/{token}` but on longer paths, so no wildcard conflict
+     * arises; a future literal like `orders/export` would have to go above all three
+     * (brief trap §10.7).
+     */
+    Route::post('orders/{token}/payment', [OrderPaymentController::class, 'start'])->name('orders.pay');
+    Route::post('orders/{token}/payment/verify', [OrderPaymentController::class, 'verify'])->name('orders.pay.verify');
 });
+
+/*
+ * ⚠️ THE WEBHOOK SITS OUTSIDE EVERY GROUP, AND THAT IS DELIBERATE.
+ *
+ * Not `auth:sanctum` — the gateway is not logged in and never will be. Not the public
+ * throttle either: rate-limiting Paystack's retries would drop the one message that
+ * proves a customer paid, and a dropped webhook is a paid order that looks unpaid.
+ *
+ * Its credential is the `x-paystack-signature` header, verified with HMAC-SHA512 over
+ * the RAW body in the controller. That is a stronger proof than a session: it shows
+ * possession of the secret key and that the body was not altered in transit.
+ */
+Route::post('webhooks/paystack', PaystackWebhookController::class)->name('webhooks.paystack');
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
 // `auth:sanctum` alone is NOT enough — a customer OTP token satisfies it. The `staff`

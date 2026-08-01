@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Contracts\SmsSender;
 use App\Models\User;
 use App\Policies\UserPolicy;
+use App\Services\Payments\PaystackClient;
 use App\Services\Sms\LogSmsSender;
 use App\Services\Sms\OrderMessages;
 use App\Services\Sms\SmsOnlineGhSender;
@@ -24,6 +25,15 @@ class AppServiceProvider extends ServiceProvider
             OrderMessages::class,
             fn () => new OrderMessages(config('app.kitchen_phone', '+233241915464')),
         );
+
+        // Constructed from config rather than reading it inside the client, so a test can
+        // hand it a key without touching the environment — and so `isConfigured()` is a
+        // property of the object rather than a global lookup that could differ per call.
+        $this->app->singleton(PaystackClient::class, fn () => new PaystackClient(
+            secretKey: (string) config('paystack.secret_key'),
+            baseUrl: (string) config('paystack.base_url'),
+            timeout: (int) config('paystack.timeout'),
+        ));
     }
 
     /**

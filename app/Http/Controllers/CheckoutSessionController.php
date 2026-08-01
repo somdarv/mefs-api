@@ -18,6 +18,7 @@ use App\Services\Ordering\BasketQuote;
 use App\Services\Ordering\OrderCreator;
 use App\Services\Ordering\OrderDraft;
 use App\Services\Ordering\OrderRefused;
+use App\Services\Payments\PaymentInitiator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -43,6 +44,7 @@ final class CheckoutSessionController extends Controller
     public function __construct(
         private readonly BasketQuote $quote,
         private readonly OrderCreator $creator,
+        private readonly PaymentInitiator $payments,
     ) {}
 
     public function store(Request $request): JsonResponse
@@ -163,10 +165,32 @@ final class CheckoutSessionController extends Controller
         $session->status = CheckoutSessionStatus::Confirmed;
         $session->save();
 
-        return ApiResponse::created(
-            new OrderResource($order->load(['items', 'statusHistory'])),
-            "Order {$order->order_number} placed",
-        );
+        /*
+         * Start the payment in the same round trip, so the customer goes straight from
+         * "place order" to Paystack rather than through an interstitial that exists only
+         * because the API needed two calls.
+         *
+         * ⚠️ AND IT CANNOT FAIL THE ORDER. `begin()` never throws: no keys, gateway down,
+         * timeout — all come back `unavailable`, `payment` is null, and the storefront falls
+         * back to "she'll be in touch about payment". That is exactly the state the system
+         * is in until keys are supplied, and the order is real either way.
+         */
+        $attempt = $this->payments->begin($order);
+
+        /*
+         * ⚠️ `resolve()`, NOT `->additional()`.
+         *
+         * `additional()` is merged by `JsonResource::toResponse()` — and this resource never
+         * goes through that, because `ApiResponse` json-encodes it inside the envelope. The
+         * extra key would have been dropped in silence, and the storefront would have read
+         * `payment: undefined` as "no online payment available" and shown the fallback copy
+         * forever. Plausible, empty, and wrong: the exact shape of failure this codebase
+         * spends its comments on.
+         */
+        $payload = (new OrderResource($order->load(['items', 'statusHistory'])))->resolve();
+        $payload['payment'] = $attempt->toArray();
+
+        return ApiResponse::created($payload, "Order {$order->order_number} placed");
     }
 
     // ── Plumbing ──────────────────────────────────────────────────────────────
