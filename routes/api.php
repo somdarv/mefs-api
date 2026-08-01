@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\Admin\CycleController as AdminCycleController;
 use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Admin\PrepSheetController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\CheckoutSessionController;
@@ -150,5 +151,16 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
         Route::post('orders/{order}/status', [AdminOrderController::class, 'transition'])->name('orders.status');
         Route::post('orders/{order}/reject-cancellation', [AdminOrderController::class, 'rejectCancellation'])->name('orders.reject-cancellation');
         Route::get('orders/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
+
+        // Courier fields and the internal note. Deliberately narrow — see the controller.
+        Route::patch('orders/{order}', [AdminOrderController::class, 'update'])->name('orders.update');
+
+        /*
+         * The screen she actually cooks from: one date, totalled per pot.
+         *
+         * A literal at the prefix root, so it collides with nothing — but note it sits
+         * ABOVE nothing either, because `orders/{order}` is on a different first segment.
+         */
+        Route::get('prep-sheet', PrepSheetController::class)->name('prep-sheet');
     });
 });

@@ -64,6 +64,12 @@ final class OrderController extends Controller
             'status' => ['nullable', Rule::in(OrderStatus::values())],
             'fulfil_date' => ['nullable', 'date_format:Y-m-d'],
             'order_cycle_id' => ['nullable', 'integer'],
+
+            // The delivery run sheet's whole filter. Here rather than in the browser: a run
+            // sheet that fetches every order and hides most of them still pages at 50 and
+            // silently drops the deliveries on page 2.
+            'order_type' => ['nullable', Rule::in(array_column(OrderType::cases(), 'value'))],
+
             'search' => ['nullable', 'string', 'max:60'],
             'include_finished' => ['nullable', 'boolean'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -74,6 +80,7 @@ final class OrderController extends Controller
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['fulfil_date'] ?? null, fn ($q, $date) => $q->whereDate('fulfil_date', $date))
             ->when($filters['order_cycle_id'] ?? null, fn ($q, $id) => $q->where('order_cycle_id', $id))
+            ->when($filters['order_type'] ?? null, fn ($q, $type) => $q->where('order_type', $type))
             ->when(
                 ($filters['status'] ?? null) === null && ! ($filters['include_finished'] ?? false),
                 fn ($q) => $q->whereNotIn('status', [OrderStatus::Completed->value, OrderStatus::Cancelled->value]),
@@ -188,6 +195,43 @@ final class OrderController extends Controller
         return ApiResponse::created(
             new StaffOrderResource($order->load(['items', 'statusHistory'])),
             "Order {$order->order_number} entered",
+        );
+    }
+
+    /**
+     * The paperwork, and nothing else.
+     *
+     * ⚠️ THE VALIDATED LIST IS THE POINT OF THIS ENDPOINT.
+     *
+     * Three fields: who is carrying it, their reference, and her note to herself. Money is
+     * not here, status is not here, and the customer's name and phone are not here — each
+     * has its own path, and each of those paths does something this one does not. Status
+     * goes through the machine and writes an audit row. Money is computed. A contact change
+     * is a change to what the customer agreed to.
+     *
+     * An "update the order" endpoint that accepted the model's whole `$fillable` would be
+     * exactly the coarse grant the brief spends §4.3 on: a permission to edit a courier
+     * name that turns out to be a permission to edit everything the endpoint happens to
+     * accept.
+     *
+     * `orders.advance` rather than `orders.view`, because this writes. It is the permission
+     * that means "you work this order", which is the same sentence as assigning its courier.
+     */
+    public function update(Request $request, Order $order): JsonResponse
+    {
+        $this->authorizePermission($request, Permission::OrdersAdvance);
+
+        $data = $request->validate([
+            'courier_name' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'courier_reference' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'internal_notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
+        ]);
+
+        $order->fill($data)->save();
+
+        return ApiResponse::success(
+            new StaffOrderResource($order->load(['items', 'statusHistory'])),
+            "Order {$order->order_number} updated",
         );
     }
 

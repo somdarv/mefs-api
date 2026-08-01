@@ -216,6 +216,110 @@ final class OrderAdminTest extends TestCase
         }
     }
 
+    /**
+     * The delivery run sheet's whole filter.
+     *
+     * Server-side rather than in the browser: the list pages at 50, so a run sheet that
+     * fetched everything and filtered client-side would silently lose the deliveries that
+     * fell on page 2 — and it would lose them on exactly the busy day it matters.
+     */
+    public function test_the_list_filters_by_order_type(): void
+    {
+        $this->asStaff($this->admin())
+            ->postJson('/api/v1/admin/orders', $this->manualPayload())
+            ->assertCreated();
+
+        $this->asStaff($this->admin())
+            ->postJson('/api/v1/admin/orders', $this->manualPayload([
+                'order_type' => 'delivery',
+                'delivery_address' => '14 Ring Road East',
+                'delivery_area' => 'Osu',
+            ]))
+            ->assertCreated();
+
+        $deliveries = $this->asStaff($this->admin())
+            ->getJson('/api/v1/admin/orders?order_type=delivery')
+            ->assertOk();
+
+        $this->assertCount(1, $deliveries->json('data.orders'));
+        $this->assertSame('Osu', $deliveries->json('data.orders.0.delivery_area'));
+
+        $this->asStaff($this->admin())
+            ->getJson('/api/v1/admin/orders?order_type=dine_in')
+            ->assertStatus(422);
+    }
+
+    // ── The paperwork ─────────────────────────────────────────────────────────
+
+    public function test_courier_details_and_the_internal_note_can_be_edited(): void
+    {
+        $this->asStaff($this->admin())->postJson('/api/v1/admin/orders', $this->manualPayload())->assertCreated();
+
+        $order = Order::query()->firstOrFail();
+
+        $this->asStaff($this->admin())
+            ->patchJson("/api/v1/admin/orders/{$order->id}", [
+                'courier_name' => 'Bolt Food',
+                'courier_reference' => 'BF-88231',
+                'internal_notes' => 'Paid by MoMo, ref 4471',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.courier_name', 'Bolt Food')
+            ->assertJsonPath('data.courier_reference', 'BF-88231')
+            ->assertJsonPath('data.internal_notes', 'Paid by MoMo, ref 4471');
+    }
+
+    /**
+     * ⚠️ THE TEST THE PATCH ENDPOINT EXISTS FOR.
+     *
+     * An "update the order" endpoint that accepted the model's whole `$fillable` would be
+     * the coarse grant of brief §4.3: a permission to name a courier that turns out to be a
+     * permission to rewrite the customer's phone number. Status and money are not even on
+     * `$fillable`, but contact details are — so the validated list is the only thing
+     * standing between the two, and it is worth an assertion rather than a reading.
+     */
+    public function test_the_patch_cannot_reach_anything_but_those_three_fields(): void
+    {
+        $this->asStaff($this->admin())->postJson('/api/v1/admin/orders', $this->manualPayload())->assertCreated();
+
+        $order = Order::query()->firstOrFail();
+
+        $this->asStaff($this->admin())
+            ->patchJson("/api/v1/admin/orders/{$order->id}", [
+                'courier_name' => 'Bolt Food',
+                'contact_phone' => '+233200000000',
+                'contact_name' => 'Somebody Else',
+                'delivery_address' => 'A different house',
+                'status' => 'completed',
+                'total' => 1,
+            ])
+            ->assertOk();
+
+        $order->refresh();
+
+        $this->assertSame('Bolt Food', $order->courier_name);
+        $this->assertSame('+233244000111', $order->contact_phone);
+        $this->assertSame('Kwame Boateng', $order->contact_name);
+        $this->assertNull($order->delivery_address);
+        $this->assertSame('received', $order->status->value);
+        $this->assertSame(12000, $order->total);
+    }
+
+    public function test_editing_an_order_needs_more_than_permission_to_read_one(): void
+    {
+        $this->asStaff($this->admin())->postJson('/api/v1/admin/orders', $this->manualPayload())->assertCreated();
+
+        $order = Order::query()->firstOrFail();
+
+        $this->revokeFromAdminRole(Permission::OrdersAdvance);
+
+        $this->asStaff($this->admin())
+            ->patchJson("/api/v1/admin/orders/{$order->id}", ['courier_name' => 'Bolt Food'])
+            ->assertForbidden();
+
+        $this->assertNull($order->fresh()->courier_name);
+    }
+
     public function test_the_staff_payload_carries_what_the_customer_payload_does_not(): void
     {
         $this->asStaff($this->admin())->postJson('/api/v1/admin/orders', $this->manualPayload())->assertCreated();
