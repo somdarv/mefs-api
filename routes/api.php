@@ -11,10 +11,12 @@ use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\PaymentController;
 use App\Http\Controllers\Admin\PrepSheetController;
 use App\Http\Controllers\Admin\PromoController;
+use App\Http\Controllers\Auth\CustomerAuthController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\BannerController;
 use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\CheckoutSessionController;
+use App\Http\Controllers\CustomerOrderController;
 use App\Http\Controllers\CycleController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MenuController;
@@ -61,6 +63,29 @@ Route::middleware('throttle:60,1')->group(function (): void {
     // The controller additionally throttles per login+IP so one attacker cannot lock a
     // real user out by guessing at them.
     Route::post('staff/login', [StaffAuthController::class, 'login'])->name('staff.login');
+
+    /*
+     * ── Customer login ────────────────────────────────────────────────────────
+     *
+     * Phone plus a one-time code.
+     *
+     * ⚠️ NAMED LIMITERS, NOT `throttle:6,1`. Two anonymous throttles on one route share a
+     * cache key, so an inline limit inside this `throttle:60,1` group increments one bucket
+     * twice per request and trips at half the number written here. See
+     * `AppServiceProvider::registerRateLimiters()` — the limits are defined there, keyed on
+     * the phone as well as the address.
+     *
+     * ⚠️ AND NEITHER IS THE REAL DEFENCE ON VERIFY — five attempts counted on the OTP row
+     * itself is (`Otp::MAX_ATTEMPTS`). An IP budget alone gives somebody with a handful of
+     * addresses a handful of budgets against the same code.
+     */
+    Route::post('customer/otp', [CustomerAuthController::class, 'request'])
+        ->middleware('throttle:otp-request')
+        ->name('customer.otp.request');
+
+    Route::post('customer/otp/verify', [CustomerAuthController::class, 'verify'])
+        ->middleware('throttle:otp-verify')
+        ->name('customer.otp.verify');
 
     /*
      * ── The basket, and the one customer-facing way it becomes an order ───────
@@ -113,6 +138,26 @@ Route::middleware('throttle:60,1')->group(function (): void {
  * possession of the secret key and that the body was not altered in transit.
  */
 Route::post('webhooks/paystack', PaystackWebhookController::class)->name('webhooks.paystack');
+
+/*
+ * ── Signed-in customers ───────────────────────────────────────────────────────
+ *
+ * `auth:sanctum` and NOTHING ELSE — no `staff` middleware, which is the whole distinction.
+ * A staff token satisfies these routes too, and that is fine: the controllers resolve the
+ * caller's own customer profile and 403 when there isn't one, so a staff member reaching
+ * here gets a refusal rather than a shadow customer account keyed to their work number.
+ *
+ * ⚠️ NOTHING HERE TAKES A `phone` OR `customer_id` PARAMETER. The identity comes from the
+ * principal, always (brief Law 2) — a `phone` query parameter on the history route would be
+ * an order-history endpoint for anybody else's number.
+ */
+Route::middleware('auth:sanctum')->group(function (): void {
+    Route::get('customer/me', [CustomerAuthController::class, 'me'])->name('customer.me');
+    Route::patch('customer/me', [CustomerAuthController::class, 'update'])->name('customer.update');
+    Route::post('customer/logout', [CustomerAuthController::class, 'logout'])->name('customer.logout');
+
+    Route::get('customer/orders', [CustomerOrderController::class, 'index'])->name('customer.orders');
+});
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
 // `auth:sanctum` alone is NOT enough — a customer OTP token satisfies it. The `staff`
