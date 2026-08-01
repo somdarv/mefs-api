@@ -16,4 +16,9 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          # The default 30s connect timeout has already produced one spurious
+          # "dial tcp: i/o timeout" against this box. The deploy itself is
+          # idempotent, so waiting longer is strictly cheaper than a false red.
+          timeout: 120s
+          command_timeout: 20m
           script: exit
