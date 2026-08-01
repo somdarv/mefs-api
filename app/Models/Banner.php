@@ -17,7 +17,7 @@ use Illuminate\Database\Eloquent\Model;
 final class Banner extends Model
 {
     protected $fillable = [
-        'title', 'body', 'link_url', 'link_label', 'tone',
+        'eyebrow', 'title', 'body', 'link_url', 'link_label', 'tone',
         'starts_at', 'ends_at', 'position', 'is_active',
     ];
 

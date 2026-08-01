@@ -28,13 +28,28 @@ final class BannerResource extends JsonResource
 
         return [
             'id' => $banner->id,
+            'eyebrow' => $banner->eyebrow,
             'title' => $banner->title,
             'body' => $banner->body,
 
+            /*
+             * ⚠️ SHAPED AS THE CAROUSEL WANTS IT, NOT AS THE TABLE STORES IT.
+             *
+             * `promo-carousel.tsx` takes a `cta: { label, href } | null` — one thing that is
+             * either there or not — while the columns are two independently nullable
+             * strings. Collapsing them here rather than in the component means the "a URL
+             * with no label" case is resolved once, on the side that can see the validation
+             * rule that makes it impossible.
+             */
+            'cta' => $banner->link_url === null || $banner->link_label === null
+                ? null
+                : ['label' => $banner->link_label, 'href' => $banner->link_url],
+
+            // Kept flat as well, because the editor binds to the two fields separately.
             'link_url' => $banner->link_url,
             'link_label' => $banner->link_label,
 
-            'image_path' => $banner->image_path,
+            'image_url' => $banner->image_path,
             'tone' => $banner->tone,
 
             'starts_at' => $banner->starts_at?->toIso8601String(),

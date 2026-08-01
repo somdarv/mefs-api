@@ -86,23 +86,29 @@ final class BannerController extends Controller
         $presence = $creating ? 'required' : 'sometimes';
 
         return [
+            'eyebrow' => ['nullable', 'string', 'max:40'],
             'title' => [$presence, 'string', 'max:120'],
             'body' => ['nullable', 'string', 'max:240'],
 
             /*
-             * ⚠️ RELATIVE PATHS ONLY.
+             * ⚠️ RELATIVE PATHS AND ON-PAGE ANCHORS ONLY.
              *
              * A banner is authored in the back office and rendered on the storefront, so an
-             * absolute URL here is an open-redirect surface pointed at customers by someone
-             * with a content permission rather than a security one. `/menu/jollof-base` is
-             * every link this actually needs.
+             * absolute URL here is an open-redirect surface pointed at customers by somebody
+             * holding a content permission rather than a security one.
+             *
+             * `#menu-heading` is allowed because the storefront is one page and most banners
+             * scroll to a section on it rather than navigating. `//evil.test` is refused by
+             * requiring a word character after the leading slash — a protocol-relative URL
+             * is an absolute one wearing a relative one's clothes, and it is the specific
+             * bypass a naive "must start with /" check misses.
              */
-            'link_url' => ['nullable', 'string', 'max:200', 'regex:/^\/[\w\-\/?=&.]*$/'],
+            'link_url' => ['nullable', 'string', 'max:200', 'regex:/^(#[\w\-]+|\/[\w\-][\w\-\/?=&.]*)$/'],
             'link_label' => ['nullable', 'string', 'max:40', 'required_with:link_url'],
 
             // A short list rather than free colour input: a banner with a hand-picked hex
             // stops matching the brand the first time the palette moves.
-            'tone' => ['sometimes', Rule::in(['brand', 'neutral', 'accent'])],
+            'tone' => ['sometimes', Rule::in(['brand', 'deep', 'soft'])],
 
             'starts_at' => ['nullable', 'date'],
             'ends_at' => ['nullable', 'date', 'after:starts_at'],

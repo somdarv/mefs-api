@@ -26,6 +26,14 @@ final class BannerTest extends TestCase
         parent::setUp();
         $this->seed(DatabaseSeeder::class);
         $this->travelTo(CarbonImmutable::parse('2026-08-02T10:00:00Z'));
+
+        /*
+         * `BannerSeeder` ships three real banners so the storefront is not empty on a fresh
+         * install. Cleared here because these tests are about ordering and scheduling
+         * behaviour over a set they control — asserting against "the seed plus mine" would
+         * make every one of them fail the day she changes the launch copy.
+         */
+        Banner::query()->delete();
     }
 
     private function asStaff(): static

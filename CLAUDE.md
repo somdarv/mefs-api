@@ -105,8 +105,16 @@ Paystack. Hosted checkout for the customer, webhook for truth.
 ## SMS
 
 SMSOnlineGH, behind a driver interface so the `log` driver can stand in locally and in CI —
-a test suite must never text a real customer. Messages: order confirmation, cutoff nudge,
-ready-for-collection.
+a test suite must never text a real customer.
+
+Messages: order confirmation, ready-for-collection, cancellation, the manual-order payment
+reminder, a customer's login code, a waitlist "it's back", and the **collection reminder**
+the day before — which is what the brief's "cutoff nudge" became, and the frontend CLAUDE.md
+says why.
+
+⚠️ **Every one of these is queued**, and `QUEUE_CONNECTION=database` locally. Without
+`php artisan queue:work` nothing is delivered — including login codes, which makes customer
+sign-in look broken rather than slow.
 
 **Delivery fees are pass-through, not revenue.** She uses a third-party courier, so the fee
 is collected and handed over. `delivery_fee_collection` records who takes it, and every
@@ -144,18 +152,31 @@ php artisan migrate
 
 ## Status
 
-**M0–M4 complete except payment.** See [../mefs/HANDOFF.md](../mefs/HANDOFF.md) for the
-current state and where to pick up, and the milestone table in the
+**M0–M7 all built, except the credentials.** See [../mefs/HANDOFF.md](../mefs/HANDOFF.md)
+for the current state and where to pick up, and the milestone table in the
 [frontend CLAUDE.md](../mefs/CLAUDE.md).
 
-`App\Services\Ordering` is where the rules live:
+`App\Services` is where the rules live. Each of these is the **only** thing that does its
+job, and the comment at the top of each says what goes wrong when there are two:
 
 | | |
 | --- | --- |
-| `CycleGate` | may someone order for this date, and why not |
-| `OrderCreator` | ⚠️ the **only** path from a basket to an order — customer confirm and admin manual entry both call it (§5.8) |
-| `OrderStatusMachine` | the **only** thing that moves an order; writes the timestamps and the audit row |
-| `BasketPricer` / `PriceCalculator` | the only place money is computed, for the quote and the order alike |
-| `PortionLedger` | the only thing that moves `cycle_day_items.portions_sold` |
+| `Ordering\CycleGate` | may someone order for this date, and why not |
+| `Ordering\OrderCreator` | ⚠️ the **only** path from a basket to an order — customer confirm and admin manual entry both call it (§5.8) |
+| `Ordering\OrderStatusMachine` | the **only** thing that moves an order; writes the timestamps and the history row |
+| `Ordering\BasketPricer` / `PriceCalculator` | the only place money is computed, for the quote and the order alike |
+| `Ordering\PortionLedger` | the only thing that moves `cycle_day_items.portions_sold` |
+| `Promotions\PromoResolver` | the only thing that decides whether a code applies, and for how much — run for the quote *and* again inside the order's transaction |
+| `Money\Insights` | every revenue figure, all of them excluding pass-through delivery fees |
+| `Money\SettlementImporter` | what actually landed in the bank; refuses a whole file on a structural problem, reports per-row mismatches |
+| `Audit\AuditLog` | acts of authority only, and it can never fail the act it is recording |
+| `Waitlist\WaitlistNotifier` | who gets told a portion came back, and who deliberately does not |
 
-204 tests, zero failing. Not built: Paystack, the SMS driver, the scheduled hold-expiry job.
+351 tests, zero failing.
+
+⚠️ **`QUEUE_CONNECTION=database` locally, so nothing texts anybody without
+`php artisan queue:work`** — including customer login codes. The suite uses the `sync`
+driver and never notices.
+
+Not built: refunds (`orders.refund` is the one permission with no route — see
+`PermissionCoverageTest` for the reason), and a back-office screen for waitlist entries.

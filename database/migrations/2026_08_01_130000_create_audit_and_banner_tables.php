@@ -91,6 +91,9 @@ return new class extends Migration
         Schema::create('banners', function (Blueprint $table): void {
             $table->id();
 
+            /** The small uppercase line above the title — "Thursdays", "Take some home". */
+            $table->string('eyebrow', 40)->nullable();
+
             $table->string('title');
             $table->string('body')->nullable();
 
@@ -104,6 +107,11 @@ return new class extends Migration
              * Which visual treatment. A short list rather than free colour input: a banner
              * with a hand-picked hex is a banner that stops matching the brand the first
              * time the palette moves.
+             *
+             * ⚠️ THE THREE VALUES ARE THE CAROUSEL'S, NOT INVENTED HERE. `brand`, `deep` and
+             * `soft` are the treatments `promo-carousel.tsx` already implements — naming
+             * them anything else on this side would mean a mapping table in the client, and
+             * a mapping table is where a fourth tone silently renders as the first.
              */
             $table->string('tone')->default('brand');
 
