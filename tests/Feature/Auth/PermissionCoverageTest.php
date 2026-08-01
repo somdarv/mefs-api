@@ -36,11 +36,19 @@ final class PermissionCoverageTest extends TestCase
      * @var list<string>
      */
     private const DELIBERATELY_UNUSED = [
-        // M6 — refunds arrive with settlement reconciliation. The other four order
-        // permissions are enforced by Admin\OrderController as of M4.
+        /*
+         * Refunds are not in M6. Settlement, insights and the payments list are — and all
+         * three now check a permission — but a refund is a domain action with consequences
+         * this build has not decided: whether the order is cancelled, whether its portions
+         * return to the day's capacity, and what happens when Paystack's own refund and
+         * ours disagree. Recording one without answering those is a half-feature that makes
+         * the ledger less trustworthy rather than more.
+         *
+         * It also cannot be exercised: executing a refund needs live Paystack credentials
+         * this build does not have.
+         */
         'orders.refund',
-        // M6 — money.
-        'payments.view', 'analytics.view',
+
         // M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)
         'customers.view', 'settings.manage', 'audit.view',
     ];

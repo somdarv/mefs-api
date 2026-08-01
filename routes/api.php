@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Admin\CycleController as AdminCycleController;
 use App\Http\Controllers\Admin\MenuItemController;
+use App\Http\Controllers\Admin\InsightsController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Admin\PaymentController;
 use App\Http\Controllers\Admin\PrepSheetController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\CheckoutConfigController;
@@ -162,5 +164,22 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
          * ABOVE nothing either, because `orders/{order}` is on a different first segment.
          */
         Route::get('prep-sheet', PrepSheetController::class)->name('prep-sheet');
+
+        /*
+         * ── Money ─────────────────────────────────────────────────────────
+         *
+         * `payments/settlements` is LITERAL and is declared first, ahead of any future
+         * `payments/{payment}` — which is the rule this file opens with, and the one that
+         * is only ever noticed after the wildcard has eaten something (trap §10.7).
+         *
+         * Three different permissions across three routes, and that spread is deliberate:
+         * reading payments, asserting what was received, and seeing revenue are three
+         * different grants. The original collapsed the third into `view_orders` and handed
+         * the company's revenue to everyone who could look up an order (§4.3.4).
+         */
+        Route::post('payments/settlements', [PaymentController::class, 'settle'])->name('payments.settle');
+        Route::get('payments', [PaymentController::class, 'index'])->name('payments.index');
+
+        Route::get('insights', InsightsController::class)->name('insights');
     });
 });

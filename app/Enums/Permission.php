@@ -49,6 +49,18 @@ enum Permission: string
 
     // ── Money ─────────────────────────────────────────────────────────────────
     case PaymentsView = 'payments.view';
+
+    /**
+     * Writing what actually landed in the bank, from a settlement file.
+     *
+     * Split from `payments.view` for the same reason `menu.price` is split from
+     * `menu.manage`: reading what was charged is an operational act, and asserting what was
+     * received is an ownership one. Collapsing them means anyone who can look at the
+     * payments list can also rewrite the settled column, and a settled column that anyone
+     * can rewrite is not evidence of anything.
+     */
+    case PaymentsReconcile = 'payments.reconcile';
+
     case AnalyticsView = 'analytics.view';         // NOT orders.view — brief Phase 5 gate
 
     // ── People ────────────────────────────────────────────────────────────────
@@ -75,7 +87,7 @@ enum Permission: string
             self::OrdersCancel, self::OrdersRefund,
             self::CyclesView, self::CyclesManage, self::CyclesOverride,
             self::MenuView, self::MenuManage, self::MenuPrice,
-            self::PaymentsView, self::AnalyticsView,
+            self::PaymentsView, self::PaymentsReconcile, self::AnalyticsView,
             self::CustomersView,
         ];
 
