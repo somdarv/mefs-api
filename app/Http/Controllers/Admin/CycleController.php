@@ -13,6 +13,7 @@ use App\Http\Resources\CycleResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\CycleDay;
 use App\Models\OrderCycle;
+use App\Services\Audit\AuditLog;
 use App\Services\Ordering\CycleBuilder;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -35,7 +36,10 @@ final class CycleController extends Controller
 {
     use AuthorizesPermissions;
 
-    public function __construct(private readonly CycleBuilder $builder) {}
+    public function __construct(
+        private readonly CycleBuilder $builder,
+        private readonly AuditLog $audit,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -144,8 +148,31 @@ final class CycleController extends Controller
         ]);
 
         $override = $data['override'] === null ? null : CycleOverride::from($data['override']);
+        $was = $cycle->override?->value;
 
         $cycle->applyOverride($override, $data['reason'] ?? null, $request->user());
+
+        /*
+         * ⚠️ THE MOST AUDIT-WORTHY ACT IN THE APPLICATION.
+         *
+         * `force_open` beats the cutoff check — it is the one thing that lets the kitchen
+         * take a job it had already said no to. "Why were we open on Friday night" and "who
+         * closed Wednesday" are the questions this row exists to answer, which is why
+         * `reason` is required whenever an override is set rather than cleared.
+         */
+        $this->audit->record(
+            action: 'cycle.override',
+            summary: match ($override) {
+                CycleOverride::ForceOpen => "Forced orders open on {$cycle->name}",
+                CycleOverride::ForceClosed => "Forced orders closed on {$cycle->name}",
+                null => "Returned {$cycle->name} to its schedule",
+            },
+            actor: $request->user(),
+            subject: $cycle,
+            before: ['override' => $was],
+            after: ['override' => $override?->value],
+            reason: $data['reason'] ?? null,
+        );
 
         return ApiResponse::success(
             new CycleResource($cycle->fresh(['days.items', 'overrideBy'])),

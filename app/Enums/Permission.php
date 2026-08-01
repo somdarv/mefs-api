@@ -76,6 +76,18 @@ enum Permission: string
      */
     case PromosManage = 'promos.manage';
 
+    /**
+     * The storefront's promotional strip.
+     *
+     * ⚠️ ONE PERMISSION, NOT TWO, AND NO `banners.view` — because reading banners is not a
+     * staff act at all. They are published to the storefront, so every customer already sees
+     * every live one; a permission to view them would guard nothing.
+     *
+     * Separate from `promos.manage` because a banner is content and a promo is money. A
+     * banner says "jollof base is here"; it does not take anything off a bill.
+     */
+    case BannersManage = 'banners.manage';
+
     // ── People ────────────────────────────────────────────────────────────────
     case CustomersView = 'customers.view';
     case StaffView = 'staff.view';
@@ -101,7 +113,7 @@ enum Permission: string
             self::CyclesView, self::CyclesManage, self::CyclesOverride,
             self::MenuView, self::MenuManage, self::MenuPrice,
             self::PaymentsView, self::PaymentsReconcile, self::AnalyticsView,
-            self::PromosView, self::PromosManage,
+            self::PromosView, self::PromosManage, self::BannersManage,
             self::CustomersView,
         ];
 

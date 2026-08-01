@@ -13,6 +13,7 @@ use App\Http\Responses\ApiResponse;
 use App\Models\Branch;
 use App\Models\MenuItem;
 use App\Models\MenuOption;
+use App\Services\Audit\AuditLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,8 @@ use Illuminate\Validation\Rule;
 final class MenuItemController extends Controller
 {
     use AuthorizesPermissions;
+
+    public function __construct(private readonly AuditLog $audit) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -169,6 +172,11 @@ final class MenuItemController extends Controller
             'options.*.price' => ['required', 'integer', 'min:0'],
         ]);
 
+        // Read before the write, so the audit row can say what a price moved *from*. A
+        // reprice is the one menu edit with money consequences, and "it used to be ₵40" is
+        // unanswerable once the row is overwritten.
+        $pricesBefore = $item->options()->pluck('price', 'option_key')->all();
+
         DB::transaction(function () use ($item, $data): void {
             $keptKeys = [];
 
@@ -191,6 +199,35 @@ final class MenuItemController extends Controller
             // retired option sitting in the table.
             $item->options()->whereNotIn('option_key', $keptKeys)->delete();
         });
+
+        $pricesAfter = $item->options()->pluck('price', 'option_key')->all();
+        [$before, $after] = AuditLog::changes($pricesBefore, $pricesAfter);
+
+        /*
+         * ⚠️ ONLY WHEN A PRICE ACTUALLY MOVED.
+         *
+         * This endpoint writes labels and prices together, so it is called every time she
+         * renames a size. Logging all of those would bury the repricings — the only thing on
+         * this endpoint anyone will ever come looking for — under routine edits, which is
+         * the failure mode the audit table's own comment warns about.
+         */
+        if ($after !== []) {
+            $this->audit->record(
+                action: 'menu.repriced',
+                summary: sprintf(
+                    '%s repriced (%s)',
+                    $item->name,
+                    implode(', ', array_map(
+                        fn (string $key) => sprintf('%s: %d → %d', $key, $before[$key] ?? 0, $after[$key]),
+                        array_keys($after),
+                    )),
+                ),
+                actor: $request->user(),
+                subject: $item,
+                before: $before,
+                after: $after,
+            );
+        }
 
         return ApiResponse::success(
             new MenuItemResource($item->fresh()->load(['options', 'addOns'])),

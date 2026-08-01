@@ -12,6 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\PromoResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\Promo;
+use App\Services\Audit\AuditLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -31,6 +32,8 @@ use Illuminate\Validation\Rule;
 final class PromoController extends Controller
 {
     use AuthorizesPermissions;
+
+    public function __construct(private readonly AuditLog $audit) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -73,6 +76,19 @@ final class PromoController extends Controller
 
         $promo->save();
 
+        /*
+         * A discount code is a money instrument. "20% off, no cap, unlimited uses" costs
+         * whatever the week's orders come to, and the terms are the whole story — so the
+         * `after` snapshot carries them rather than just the code.
+         */
+        $this->audit->record(
+            action: 'promo.created',
+            summary: sprintf('Created %s — %s', $promo->code, $this->terms($promo)),
+            actor: $request->user(),
+            subject: $promo,
+            after: $this->auditable($promo),
+        );
+
         return ApiResponse::created(
             new PromoResource($promo->loadCount('redemptions')),
             "{$promo->code} created",
@@ -88,7 +104,21 @@ final class PromoController extends Controller
         // the whole promo and risk clearing a field it never mentioned.
         $data = $request->validate($this->rules(creating: false));
 
+        $was = $this->auditable($promo);
         $promo->fill($data)->save();
+
+        [$before, $after] = AuditLog::changes($was, $this->auditable($promo->refresh()));
+
+        if ($after !== []) {
+            $this->audit->record(
+                action: 'promo.updated',
+                summary: sprintf('Edited %s — %s', $promo->code, implode(', ', array_keys($after))),
+                actor: $request->user(),
+                subject: $promo,
+                before: $before,
+                after: $after,
+            );
+        }
 
         return ApiResponse::success(
             new PromoResource($promo->loadCount('redemptions')),
@@ -201,5 +231,52 @@ final class PromoController extends Controller
         $promo = request()->route('promo');
 
         return $promo instanceof Promo ? $promo->type->value : null;
+    }
+
+    /**
+     * The fields worth having a before/after of.
+     *
+     * `times_used` is absent: it moves on every order, so including it would make every
+     * audit row look like an edit and drown the ones that are.
+     *
+     * @return array<string, mixed>
+     */
+    private function auditable(Promo $promo): array
+    {
+        return [
+            'type' => $promo->type->value,
+            'value' => $promo->value,
+            'max_discount' => $promo->max_discount,
+            'min_subtotal' => $promo->min_subtotal,
+            'scope' => $promo->scope->value,
+            'first_order_only' => $promo->first_order_only,
+            'usage_limit' => $promo->usage_limit,
+            'usage_limit_per_customer' => $promo->usage_limit_per_customer,
+            'starts_at' => $promo->starts_at?->toIso8601String(),
+            'ends_at' => $promo->ends_at?->toIso8601String(),
+            'is_active' => $promo->is_active,
+        ];
+    }
+
+    /** "20% off, capped at ₵10, meals only" — the summary line, in one sentence. */
+    private function terms(Promo $promo): string
+    {
+        $amount = $promo->type === PromoType::Percentage
+            ? "{$promo->value}% off"
+            : '₵'.number_format($promo->value / 100, 2).' off';
+
+        $parts = [$amount];
+
+        if ($promo->max_discount !== null) {
+            $parts[] = 'capped at ₵'.number_format($promo->max_discount / 100, 2);
+        }
+
+        if ($promo->scope !== PromoScope::All) {
+            $parts[] = mb_strtolower($promo->scope->label());
+        }
+
+        $parts[] = $promo->usage_limit === null ? 'unlimited uses' : "{$promo->usage_limit} uses";
+
+        return implode(', ', $parts);
     }
 }

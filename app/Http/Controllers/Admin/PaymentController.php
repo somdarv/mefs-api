@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\PaymentResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\Payment;
+use App\Services\Audit\AuditLog;
 use App\Services\Money\SettlementImporter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,7 +29,10 @@ final class PaymentController extends Controller
 {
     use AuthorizesPermissions;
 
-    public function __construct(private readonly SettlementImporter $importer) {}
+    public function __construct(
+        private readonly SettlementImporter $importer,
+        private readonly AuditLog $audit,
+    ) {}
 
     /**
      * Every attempt, filterable.
@@ -133,6 +137,29 @@ final class PaymentController extends Controller
 
         $result = $this->importer->import(
             SettlementImporter::parse($request->file('file')->get()),
+        );
+
+        /*
+         * ⚠️ AN ACT WITH NO SINGLE SUBJECT, and `subject_type`/`subject_id` are left null
+         * rather than pointed at an arbitrary one of the payments it touched.
+         *
+         * Asserting what landed in the bank is an ownership act — its own permission, and
+         * its own audit row. The summary carries the outcome counts because that is what
+         * makes an import worth revisiting: "47 settled, 3 conflicts" is the row somebody
+         * comes back to when a figure looks wrong.
+         */
+        $this->audit->record(
+            action: 'payments.settled',
+            summary: sprintf(
+                'Imported a settlement file — %s',
+                implode(', ', array_map(
+                    fn (string $outcome, int $count) => "{$count} {$outcome}",
+                    array_keys($result['summary']),
+                    array_values($result['summary']),
+                )),
+            ),
+            actor: $request->user(),
+            after: $result['summary'],
         );
 
         return ApiResponse::success($result, sprintf(

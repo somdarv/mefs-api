@@ -19,6 +19,7 @@ use App\Services\Ordering\CycleBuilder;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Permission\Models\Role as SpatieRole;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
@@ -237,9 +238,8 @@ final class PromoTest extends TestCase
     /**
      * ⚠️ A REASON, NEVER A BARE `false`. "That code isn't valid" is the message that
      * generates a phone call; "that code runs out on Friday" is one she never hears about.
-     *
-     * @dataProvider refusals
      */
+    #[DataProvider('refusals')]
     public function test_each_refusal_says_which_one_it_is(array $attributes, string $expected): void
     {
         $promo = $this->promo();

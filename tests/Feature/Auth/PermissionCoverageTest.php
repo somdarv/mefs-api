@@ -50,7 +50,7 @@ final class PermissionCoverageTest extends TestCase
         'orders.refund',
 
         // M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)
-        'customers.view', 'settings.manage', 'audit.view',
+        'customers.view', 'settings.manage',
     ];
 
     /**

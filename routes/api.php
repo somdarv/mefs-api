@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Admin\AuditController;
+use App\Http\Controllers\Admin\BannerController as AdminBannerController;
 use App\Http\Controllers\Admin\CycleController as AdminCycleController;
 use App\Http\Controllers\Admin\InsightsController;
 use App\Http\Controllers\Admin\MenuItemController;
@@ -10,6 +12,7 @@ use App\Http\Controllers\Admin\PaymentController;
 use App\Http\Controllers\Admin\PrepSheetController;
 use App\Http\Controllers\Admin\PromoController;
 use App\Http\Controllers\Auth\StaffAuthController;
+use App\Http\Controllers\BannerController;
 use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\CheckoutSessionController;
 use App\Http\Controllers\CycleController;
@@ -49,6 +52,10 @@ Route::middleware('throttle:60,1')->group(function (): void {
     // The date picker's whole source of truth: which days exist and, per day, whether
     // ordering is open and why not.
     Route::get('cycles/current', [CycleController::class, 'current'])->name('cycles.current');
+
+    // Live banners only — a banner scheduled for Friday must not be readable on Tuesday
+    // by anyone who opens the network tab.
+    Route::get('banners', BannerController::class)->name('banners');
 
     // Login is unauthenticated by definition, and is the route most worth guessing at.
     // The controller additionally throttles per login+IP so one attacker cannot lock a
@@ -194,5 +201,19 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
         Route::post('promos', [PromoController::class, 'store'])->name('promos.store');
         Route::patch('promos/{promo}', [PromoController::class, 'update'])->name('promos.update');
         Route::delete('promos/{promo}', [PromoController::class, 'destroy'])->name('promos.destroy');
+
+        Route::get('banners', [AdminBannerController::class, 'index'])->name('banners.index');
+        Route::post('banners', [AdminBannerController::class, 'store'])->name('banners.store');
+        Route::patch('banners/{banner}', [AdminBannerController::class, 'update'])->name('banners.update');
+        Route::delete('banners/{banner}', [AdminBannerController::class, 'destroy'])->name('banners.destroy');
+
+        /*
+         * ── The audit log ─────────────────────────────────────────────────
+         *
+         * ⚠️ GET AND NOTHING ELSE. There is no PATCH and no DELETE here, for anyone,
+         * including `tech_admin` — a row the most privileged account can edit is not
+         * evidence. See `AuditController` for why `audit.view` is not on the admin role.
+         */
+        Route::get('audit', AuditController::class)->name('audit');
     });
 });
