@@ -22,8 +22,9 @@ final class PriceCalculator
 {
     /**
      * @param  list<PricedLine>  $lines
+     * @param  int  $discount  already resolved by `PromoResolver`, in pesewas
      */
-    public function calculate(array $lines, OrderType $type): OrderTotals
+    public function calculate(array $lines, OrderType $type, int $discount = 0): OrderTotals
     {
         $subtotal = 0;
 
@@ -34,9 +35,20 @@ final class PriceCalculator
         $serviceCharge = $this->serviceCharge($subtotal);
         $deliveryFee = $this->deliveryFee($type);
 
-        // Promos are M7. Zero, explicitly, rather than absent — a column that is always
-        // zero is honest, a column that is sometimes missing is a null check everywhere.
-        $discount = 0;
+        /*
+         * ⚠️ THE DISCOUNT ARRIVES ALREADY DECIDED, AND IS CLAMPED TO THE SUBTOTAL HERE.
+         *
+         * `PromoResolver` owns whether a code applies and for how much — this class owns
+         * arithmetic and nothing else. The clamp is a second belt on the resolver's own cap:
+         * every money column on `orders` is `unsignedInteger`, so a discount larger than the
+         * subtotal does not produce a negative total, it produces a **database error at
+         * insert on a sale that was otherwise fine**.
+         *
+         * Note what it is clamped against: the SUBTOTAL, never the total. Clamping against
+         * the total would permit a discount that eats into the delivery fee, and that fee is
+         * the courier's money, not hers (§5.3).
+         */
+        $discount = max(0, min($discount, $subtotal));
 
         return new OrderTotals(
             subtotal: $subtotal,

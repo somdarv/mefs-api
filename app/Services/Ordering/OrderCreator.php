@@ -9,7 +9,9 @@ use App\Enums\OrderType;
 use App\Models\Branch;
 use App\Models\CycleDay;
 use App\Models\Order;
+use App\Models\Promo;
 use App\Models\SystemSetting;
+use App\Services\Promotions\PromoResolver;
 use App\Services\Sms\OrderNotifier;
 use App\Support\GhanaPhone;
 use Illuminate\Support\Carbon;
@@ -36,6 +38,7 @@ use Illuminate\Support\Str;
  *   the branch    derived server-side, never from the request (brief Law 2)
  *   the numbers   `order_number` under a lock, `tracking_token` random
  *   the ledger    `portions_sold`, moved once, inside the same transaction
+ *   the promo     re-resolved here, never carried from the quote; redeemed under a lock
  *   the audit     the first `order_status_history` row
  *
  * ── WHAT THE ADMIN PATH DOES *NOT* GET ────────────────────────────────────────
@@ -55,6 +58,7 @@ final class OrderCreator
         private readonly OrderNumberSequence $numbers,
         private readonly OrderStatusMachine $statuses,
         private readonly OrderNotifier $notifier,
+        private readonly PromoResolver $promos,
     ) {}
 
     /**
@@ -98,7 +102,28 @@ final class OrderCreator
                 $this->assertPantryOnly($priced);
             }
 
-            $totals = $this->prices->calculate($priced, $draft->type);
+            /*
+             * ⚠️ RESOLVED HERE, INSIDE THE TRANSACTION, NOT CARRIED FROM THE QUOTE.
+             *
+             * The checkout screen quoted a discount against the basket as it was then. This
+             * is the basket as it is now. A customer who applies a code at ₵60, goes back,
+             * removes two dishes and confirms at ₵20 gets what a ₵20 basket earns — and a
+             * client that could send the discount could send any discount.
+             *
+             * The refusal path is deliberately silent: a code that no longer applies does
+             * NOT refuse the order. It falls through at full price, and `promo_code` records
+             * what was claimed either way. Killing a confirmed sale over a promo would be a
+             * far worse outcome than a customer paying what their basket is worth, and the
+             * storefront has already shown them the code's state on the checkout screen.
+             */
+            $verdict = $this->promos->resolve($draft->promoCode, $priced, $phone, $draft->customerId);
+
+            // Takes the lock and re-checks the limits a counter can race on. The totals come
+            // from THIS figure, not from the verdict's — see `PromoResolver::confirm()` for
+            // why the two can differ and why that is not an error.
+            $discount = $this->promos->confirm($verdict, $phone);
+
+            $totals = $this->prices->calculate($priced, $draft->type, $discount);
 
             $order = new Order;
 
@@ -120,6 +145,16 @@ final class OrderCreator
             $order->fulfil_date = $day?->date;
 
             $order->forceFill($totals->toArray());
+
+            /*
+             * The code as typed is snapshotted whether or not it applied — the same rule as
+             * item names. "I used a code and got nothing off" is a question she has to be
+             * able to answer, and it is unanswerable if a refused code leaves no trace.
+             * `promo_id` is set only when it actually applied, so a join over it counts
+             * redemptions rather than attempts.
+             */
+            $order->promo_code = $draft->promoCode === null ? null : Promo::normaliseCode($draft->promoCode);
+            $order->promo_id = $discount > 0 ? $verdict->promo?->id : null;
 
             $order->payment_method = $draft->paymentMethod;
             $order->payment_status = 'pending';
@@ -146,6 +181,9 @@ final class OrderCreator
             if ($day !== null) {
                 $this->ledger->reserve($day, $priced);
             }
+
+            // The redemption row and the counter, under the lock taken above.
+            $this->promos->record($verdict, $order, $discount);
 
             $this->statuses->recordPlacement(
                 $order,

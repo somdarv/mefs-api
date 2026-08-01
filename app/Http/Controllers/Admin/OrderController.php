@@ -164,6 +164,10 @@ final class OrderController extends Controller
             'delivery_note' => ['nullable', 'string', 'max:500'],
             'internal_notes' => ['nullable', 'string', 'max:2000'],
             'payment_method' => ['nullable', 'string', 'max:40'],
+            // She honours a code over the phone the same way the storefront does — through
+            // the same resolver, with the same limits. No `exists` rule: a code that does
+            // not apply produces an order at full price, not a 422 on a call she is on.
+            'promo_code' => ['nullable', 'string', 'max:32'],
         ]);
 
         $draft = new OrderDraft(
@@ -179,6 +183,7 @@ final class OrderController extends Controller
             gpsCode: $data['gps_code'] ?? null,
             deliveryNote: $data['delivery_note'] ?? null,
             internalNotes: $data['internal_notes'] ?? null,
+            promoCode: $data['promo_code'] ?? null,
             paymentMethod: $data['payment_method'] ?? 'mobile_money',
             actor: $request->user(),
         );

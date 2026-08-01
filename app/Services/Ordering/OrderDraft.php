@@ -41,6 +41,15 @@ final readonly class OrderDraft
         /** Staff-only, and only ever set on a manual entry. Never rendered to a customer. */
         public ?string $internalNotes = null,
         /**
+         * The code as typed, and only the code.
+         *
+         * ⚠️ NOT THE DISCOUNT. A caller may say which code they are claiming; it may never
+         * say what that code is worth. `PromoResolver` decides that, again, inside the
+         * order's transaction — for the same reason there is no `unit_price` on a basket
+         * line. A client that could send an amount could send any amount.
+         */
+        public ?string $promoCode = null,
+        /**
          * How they intend to pay. A statement of intent, not of fact — `is_paid` moves only
          * when a payment lands, and a browser redirect is never proof of one.
          */

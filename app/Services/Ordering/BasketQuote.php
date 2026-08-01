@@ -7,6 +7,8 @@ namespace App\Services\Ordering;
 use App\Enums\OrderType;
 use App\Models\CheckoutSession;
 use App\Models\SystemSetting;
+use App\Services\Promotions\PromoResolver;
+use App\Services\Promotions\PromoVerdict;
 
 /**
  * What the checkout screen needs to render a basket: priced lines, a quote for each way of
@@ -28,6 +30,7 @@ final class BasketQuote
         private readonly BasketPricer $pricer,
         private readonly PriceCalculator $prices,
         private readonly CycleGate $gate,
+        private readonly PromoResolver $promos,
     ) {}
 
     /**
@@ -38,7 +41,7 @@ final class BasketQuote
         $lines = BasketLine::listFrom($session->lines ?? []);
 
         if ($lines === []) {
-            return ['lines' => [], 'quotes' => [], 'ordering' => null];
+            return ['lines' => [], 'quotes' => [], 'ordering' => null, 'promo' => PromoVerdict::none()->toArray()];
         }
 
         try {
@@ -57,8 +60,24 @@ final class BasketQuote
                     'closes_at' => null,
                     'remaining' => null,
                 ],
+                'promo' => PromoVerdict::none()->toArray(),
             ];
         }
+
+        /*
+         * ⚠️ RESOLVED WITH NO PHONE NUMBER, AND THAT IS WHY THIS QUOTE IS ADVISORY.
+         *
+         * The basket has no contact details yet — they are entered on the confirm step — so
+         * the two person-bound rules cannot be evaluated here: "first order only" and the
+         * per-customer limit. A quote can therefore show a discount that confirm refuses,
+         * and it says so through the same `reason` field rather than through a mismatched
+         * total appearing at the last moment.
+         *
+         * Passing a phone we do not have would mean inventing one. The honest move is to
+         * evaluate what is knowable now and re-evaluate everything at confirm, which is what
+         * `OrderCreator` does.
+         */
+        $promo = $this->promos->resolve($session->promo_code, $priced);
 
         return [
             'lines' => array_map(fn (PricedLine $l) => [
@@ -74,8 +93,9 @@ final class BasketQuote
                 'notes' => $l->notes,
             ], $priced),
 
-            'quotes' => $this->quotes($priced, $session),
+            'quotes' => $this->quotes($priced, $session, $promo->discount),
             'ordering' => $this->ordering($session),
+            'promo' => $promo->toArray(),
         ];
     }
 
@@ -89,7 +109,7 @@ final class BasketQuote
      * @param  list<PricedLine>  $priced
      * @return list<array<string, mixed>>
      */
-    private function quotes(array $priced, CheckoutSession $session): array
+    private function quotes(array $priced, CheckoutSession $session, int $discount): array
     {
         $pantryOnly = $this->pricer->isPantryOnly($priced);
         $hasDay = $session->cycle_day_id !== null;
@@ -109,7 +129,13 @@ final class BasketQuote
                 default => null,
             };
 
-            $totals = $this->prices->calculate($priced, $type);
+            /*
+             * The same discount on every quote, because it is scoped to the food and the
+             * food does not change between pickup and delivery. If it varied by order type
+             * it would mean the discount was reaching the delivery fee, which is the one
+             * thing it must never do (§5.3).
+             */
+            $totals = $this->prices->calculate($priced, $type, $discount);
 
             $quotes[] = array_merge(
                 ['order_type' => $type->value, 'label' => $type->label(), 'available' => $unavailable === null],

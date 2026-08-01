@@ -63,6 +63,19 @@ enum Permission: string
 
     case AnalyticsView = 'analytics.view';         // NOT orders.view — brief Phase 5 gate
 
+    // ── Marketing ─────────────────────────────────────────────────────────────
+    case PromosView = 'promos.view';
+
+    /**
+     * Creating and editing discount codes.
+     *
+     * A promo is a money instrument, not a content edit. "20% off, no cap, unlimited uses"
+     * is a sentence anyone holding this can write, and it costs whatever the week's orders
+     * come to. Split from `promos.view` so a future role can read which codes are running
+     * without being able to mint one.
+     */
+    case PromosManage = 'promos.manage';
+
     // ── People ────────────────────────────────────────────────────────────────
     case CustomersView = 'customers.view';
     case StaffView = 'staff.view';
@@ -88,6 +101,7 @@ enum Permission: string
             self::CyclesView, self::CyclesManage, self::CyclesOverride,
             self::MenuView, self::MenuManage, self::MenuPrice,
             self::PaymentsView, self::PaymentsReconcile, self::AnalyticsView,
+            self::PromosView, self::PromosManage,
             self::CustomersView,
         ];
 

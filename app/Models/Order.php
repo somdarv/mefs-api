@@ -116,6 +116,19 @@ class Order extends Model
         return $this->belongsTo(OrderCycle::class, 'order_cycle_id');
     }
 
+    /**
+     * Set only when a code actually took something off, so a join over it counts
+     * redemptions rather than attempts.
+     *
+     * ⚠️ NOT THE SOURCE OF TRUTH FOR THE RECEIPT. `promo_code` is the snapshot — the code as
+     * typed, kept whether it applied or not, and it survives the promo being deleted. This
+     * relation nulls out when that happens, exactly as it should.
+     */
+    public function promo(): BelongsTo
+    {
+        return $this->belongsTo(Promo::class);
+    }
+
     public function cycleDay(): BelongsTo
     {
         return $this->belongsTo(CycleDay::class, 'cycle_day_id');

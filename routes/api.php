@@ -3,11 +3,12 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Admin\CycleController as AdminCycleController;
-use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Admin\InsightsController;
+use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\PaymentController;
 use App\Http\Controllers\Admin\PrepSheetController;
+use App\Http\Controllers\Admin\PromoController;
 use App\Http\Controllers\Auth\StaffAuthController;
 use App\Http\Controllers\CheckoutConfigController;
 use App\Http\Controllers\CheckoutSessionController;
@@ -181,5 +182,17 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
         Route::get('payments', [PaymentController::class, 'index'])->name('payments.index');
 
         Route::get('insights', InsightsController::class)->name('insights');
+
+        /*
+         * ── Marketing ─────────────────────────────────────────────────────
+         *
+         * No `show`. The list returns everything a promo has — there are a handful of them,
+         * not a catalogue — and a detail endpoint would be a second serialisation of the
+         * same row to keep in step with the first.
+         */
+        Route::get('promos', [PromoController::class, 'index'])->name('promos.index');
+        Route::post('promos', [PromoController::class, 'store'])->name('promos.store');
+        Route::patch('promos/{promo}', [PromoController::class, 'update'])->name('promos.update');
+        Route::delete('promos/{promo}', [PromoController::class, 'destroy'])->name('promos.destroy');
     });
 });

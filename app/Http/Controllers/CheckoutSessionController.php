@@ -12,6 +12,7 @@ use App\Http\Resources\OrderResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\CheckoutSession;
 use App\Models\CycleDay;
+use App\Models\Promo;
 use App\Rules\PhoneNumber;
 use App\Services\Ordering\BasketLine;
 use App\Services\Ordering\BasketQuote;
@@ -59,6 +60,7 @@ final class CheckoutSessionController extends Controller
         $session->guest_session = $this->guestSession($request) ?? Str::random(48);
         $session->customer_id = $request->user()?->customer?->id;
         $session->lines = $data['lines'];
+        $session->promo_code = isset($data['promo_code']) ? Promo::normaliseCode($data['promo_code']) : null;
         // Set here rather than left to the column default: a saved model does not read
         // defaults back from the database, so `$session->status` would be null on the way
         // out and the resource would fall over serialising it.
@@ -89,6 +91,22 @@ final class CheckoutSessionController extends Controller
 
         if (array_key_exists('lines', $data)) {
             $session->lines = $data['lines'];
+        }
+
+        /*
+         * `promo_code: null` clears it, which is different from not sending the key — the
+         * same distinction the day binding below makes, and for the same reason: a customer
+         * removing a code is an action, not an omission.
+         *
+         * Normalised on the way in so the stored value matches the unique index. Note there
+         * is no validation that the code EXISTS: an unknown code is not a 422, it is a
+         * basket whose quote comes back with `promo.reason: unknown_code` and a sentence to
+         * show. Rejecting the request would mean the customer's typo throws away the rest of
+         * the update they were making.
+         */
+        if ($request->has('promo_code')) {
+            $code = $data['promo_code'] ?? null;
+            $session->promo_code = $code === null ? null : Promo::normaliseCode($code);
         }
 
         // `cycle_day_id: null` means "unbind", which is different from not sending the key
@@ -148,6 +166,13 @@ final class CheckoutSessionController extends Controller
             deliveryNote: $data['delivery_note'] ?? null,
             // internal_notes is absent, deliberately: it is staff-only, and there is no
             // field here for a customer to write into it.
+
+            // ⚠️ FROM THE BASKET, NOT FROM THIS REQUEST BODY. The code the quote was
+            // computed against is the code the order is priced against; accepting it here
+            // as well would let a confirm claim a code the basket never carried, and the
+            // customer would be looking at one total while being charged another.
+            promoCode: $session->promo_code,
+
             paymentMethod: $data['payment_method'] ?? 'mobile_money',
         );
 
@@ -209,6 +234,9 @@ final class CheckoutSessionController extends Controller
             'lines.*.quantity' => ['required', 'integer', 'min:1', 'max:99'],
             'lines.*.notes' => ['nullable', 'string', 'max:280'],
             'cycle_day_id' => ['nullable', 'integer', 'exists:cycle_days,id'],
+            // No `exists` rule. See `update()` for why an unknown code is a verdict on the
+            // quote rather than a validation failure.
+            'promo_code' => ['nullable', 'string', 'max:32'],
         ]);
     }
 
