@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\OrderStatusChange;
 use App\Models\User;
 use App\Services\Sms\OrderNotifier;
+use App\Services\Waitlist\WaitlistNotifier;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -40,6 +41,7 @@ final class OrderStatusMachine
     public function __construct(
         private readonly PortionLedger $ledger,
         private readonly OrderNotifier $notifier,
+        private readonly WaitlistNotifier $waitlist,
     ) {}
 
     /**
@@ -105,7 +107,35 @@ final class OrderStatusMachine
         // that has already happened.
         $this->notify($order, $to);
 
+        if ($to === OrderStatus::Cancelled) {
+            $this->offerToWaitlist($order);
+        }
+
         return $order;
+    }
+
+    /**
+     * A cancellation is the only moment capacity comes back on its own, and it is the whole
+     * reason the waitlist exists.
+     *
+     * ⚠️ AFTER THE COMMIT, LIKE EVERY OTHER NOTIFICATION — and here that is load-bearing
+     * rather than merely consistent: the notifier re-reads the day to check the gate and to
+     * see current capacity, and inside the transaction it would read the portions as still
+     * sold. It would then decide there was nothing to offer, on the one event it exists for.
+     */
+    private function offerToWaitlist(Order $order): void
+    {
+        $day = $order->cycleDay;
+
+        if ($day === null) {
+            return;
+        }
+
+        // Per dish, because somebody waiting on waakye must not be texted when the etor
+        // comes back. The quantities are the ones just released.
+        foreach ($order->items->groupBy('menu_item_id') as $menuItemId => $items) {
+            $this->waitlist->capacityFreed($day, (int) $menuItemId, (int) $items->sum('quantity'));
+        }
     }
 
     /**

@@ -51,6 +51,23 @@ final class OrderNotifier
         $this->queue($order, $this->messages->ready($order), 'ready');
     }
 
+    /**
+     * "Your food is tomorrow."
+     *
+     * ⚠️ NOT SENT FOR AN ORDER THAT IS ALREADY DONE OR CANCELLED. The command that drives
+     * this filters on status too, but a reminder for a collected order is the single most
+     * confusing message this system could send, so it is refused here as well — the check is
+     * cheap and the failure is not.
+     */
+    public function collectionReminder(Order $order): void
+    {
+        if ($order->status->isTerminal()) {
+            return;
+        }
+
+        $this->queue($order, $this->messages->collectionReminder($order), 'collection_reminder');
+    }
+
     public function cancelled(Order $order): void
     {
         $this->queue($order, $this->messages->cancelled($order), 'cancelled');

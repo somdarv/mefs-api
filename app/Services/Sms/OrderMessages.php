@@ -72,6 +72,30 @@ final class OrderMessages
         };
     }
 
+    /**
+     * "Your food is tomorrow."
+     *
+     * ⚠️ THE MESSAGE THIS BUSINESS NEEDS MOST AND A SAME-DAY KITCHEN WOULD NEVER SEND.
+     *
+     * An order placed on the 1st for the 12th is eleven days out of mind. Somebody who
+     * forgets does not just miss their food — she has already cooked it, and a pre-order
+     * kitchen has no walk-in trade to sell it to. This is the one text that prevents waste
+     * rather than answering a question.
+     *
+     * It says the time and the place, because "you have an order tomorrow" sends them back
+     * to the site to find out where and when — and the whole point is to save that trip.
+     */
+    public function collectionReminder(Order $order): string
+    {
+        $when = $order->fulfil_date?->format('D j M') ?? 'tomorrow';
+
+        return match ($order->order_type) {
+            OrderType::Pickup => "Mef's: reminder — order {$order->order_number} is ready to "
+                ."collect {$when} at ".($order->branchSnapshot()['address'] ?? 'the kitchen').'.',
+            default => "Mef's: reminder — order {$order->order_number} is coming to you {$when}.",
+        };
+    }
+
     public function cancelled(Order $order): string
     {
         return "Mef's: order {$order->order_number} has been cancelled. "

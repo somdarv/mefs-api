@@ -23,6 +23,7 @@ use App\Http\Controllers\MenuController;
 use App\Http\Controllers\OrderPaymentController;
 use App\Http\Controllers\OrderTrackingController;
 use App\Http\Controllers\PaystackWebhookController;
+use App\Http\Controllers\WaitlistController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -58,6 +59,15 @@ Route::middleware('throttle:60,1')->group(function (): void {
     // Live banners only — a banner scheduled for Friday must not be readable on Tuesday
     // by anyone who opens the network tab.
     Route::get('banners', BannerController::class)->name('banners');
+
+    /*
+     * "Text me if a portion comes back." The only place this system captures demand it
+     * could not meet — every other table records what sold.
+     *
+     * Unauthenticated, because somebody who cannot buy the food is the last person to ask
+     * for an account first.
+     */
+    Route::post('waitlist', [WaitlistController::class, 'store'])->name('waitlist.store');
 
     // Login is unauthenticated by definition, and is the route most worth guessing at.
     // The controller additionally throttles per login+IP so one attacker cannot lock a
