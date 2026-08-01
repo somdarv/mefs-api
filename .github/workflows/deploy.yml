@@ -1,0 +1,19 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # The key's authorized_keys entry carries a forced command, so the server
+      # runs deploy-mefs-api.sh regardless of what is sent here. `script` is a
+      # placeholder by design: a leaked key can run that one script, never a shell.
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: exit
