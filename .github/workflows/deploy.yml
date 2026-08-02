@@ -54,13 +54,20 @@ jobs:
           # `true` is ignored: authorized_keys carries a forced command, so the box runs its
           # deploy script whatever we send. That is the design, not a placeholder.
           for attempt in 1 2 3 4 5; do
+            # ⚠️ `|| rc=$?` IS WHAT MAKES THE RETRY REACHABLE, NOT DECORATION.
+            #
+            # Actions runs `run:` steps as `bash -e`, and `set -uo pipefail` above does not
+            # turn that off. A bare `ssh ...` followed by `rc=$?` is an UNTESTED command, so
+            # the first timeout killed the whole step before `rc` was ever read: the loop
+            # below looked correct and could not execute. Putting the call on the left of
+            # `||` makes it tested, which is the one thing `-e` does not act on.
+            rc=0
             ssh -i "$key" \
                 -o StrictHostKeyChecking=accept-new \
                 -o ConnectTimeout=30 \
                 -o ServerAliveInterval=20 \
                 -o ServerAliveCountMax=30 \
-                "$SSH_USER@$SSH_HOST" true
-            rc=$?
+                "$SSH_USER@$SSH_HOST" true || rc=$?
 
             if [ "$rc" -eq 0 ]; then
               echo "::notice::Deployed on attempt $attempt"
