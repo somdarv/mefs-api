@@ -4,21 +4,77 @@ on:
   push:
     branches: [main]
 
+# A second push while one is deploying should not race it onto the box. The newer commit
+# wins; the older one is cancelled before it starts rather than after it has half-built.
+concurrency:
+  group: deploy-mefs-api
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
     steps:
-      # The key's authorized_keys entry carries a forced command, so the server
-      # runs deploy-mefs-api.sh regardless of what is sent here. `script` is a
-      # placeholder by design: a leaked key can run that one script, never a shell.
-      - uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          # The default 30s connect timeout has already produced one spurious
-          # "dial tcp: i/o timeout" against this box. The deploy itself is
-          # idempotent, so waiting longer is strictly cheaper than a false red.
-          timeout: 120s
-          command_timeout: 20m
-          script: exit
+      # ── WHY THIS IS PLAIN SSH AND NOT appleboy/ssh-action ────────────────────
+      #
+      # The runner-to-box path is intermittently lossy: measured over the first two days,
+      # three of eight deploys died on `dial tcp :22: i/o timeout`, twice after the full
+      # 120s connect timeout had elapsed. It is not configuration — sshd listens on IPv4,
+      # ufw allows 22 from anywhere, there is no fail2ban, and `journalctl -u ssh` shows
+      # GitHub runner IPs authenticating successfully minutes either side of a failure.
+      # Raising the timeout did not help, because the packets are not arriving at all.
+      #
+      # So it has to retry. The action has no retry, which is the whole reason it is gone.
+      #
+      # ⚠️ THE RETRY IS GUARDED ON EXIT CODE 255, AND THAT DISTINCTION IS THE POINT.
+      #
+      # ssh exits 255 for its OWN failures (connection refused, timeout, auth) and otherwise
+      # exits with the remote command's status. The remote command here is the deploy script,
+      # via a forced command in authorized_keys. So:
+      #
+      #   255      -> we never reached the box. Safe to try again.
+      #   anything -> the deploy ran and failed. Retrying would re-run a broken build and
+      #   else       bury the real error under a second one, so fail immediately.
+      #
+      # A blanket "retry on any failure" would turn a genuine build failure into four.
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -uo pipefail
+
+          key="$(mktemp)"
+          printf '%s\n' "$SSH_KEY" > "$key"
+          chmod 600 "$key"
+          trap 'rm -f "$key"' EXIT
+
+          # `true` is ignored: authorized_keys carries a forced command, so the box runs its
+          # deploy script whatever we send. That is the design, not a placeholder.
+          for attempt in 1 2 3 4 5; do
+            ssh -i "$key" \
+                -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=30 \
+                -o ServerAliveInterval=20 \
+                -o ServerAliveCountMax=30 \
+                "$SSH_USER@$SSH_HOST" true
+            rc=$?
+
+            if [ "$rc" -eq 0 ]; then
+              echo "::notice::Deployed on attempt $attempt"
+              exit 0
+            fi
+
+            if [ "$rc" -ne 255 ]; then
+              echo "::error::Deploy script failed on the server (exit $rc). Not retrying."
+              exit "$rc"
+            fi
+
+            echo "::warning::Could not reach the host (attempt $attempt/5). Retrying in 30s."
+            sleep 30
+          done
+
+          echo "::error::Could not reach the host after 5 attempts."
+          exit 1
