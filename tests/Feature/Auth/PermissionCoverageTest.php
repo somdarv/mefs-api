@@ -49,8 +49,14 @@ final class PermissionCoverageTest extends TestCase
          */
         'orders.refund',
 
-        // M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)
-        'customers.view', 'settings.manage',
+        /*
+         * M7 — the rest. (staff.view / staff.manage are already enforced by UserPolicy.)
+         *
+         * `settings.manage` came OFF this list when the payment-mode switch landed: it is
+         * now checked by `Admin\PaymentModeController`, which is the first thing in the
+         * build that writes a `system_settings` row over HTTP.
+         */
+        'customers.view',
     ];
 
     /**

@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\InsightsController;
 use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\PaymentController;
+use App\Http\Controllers\Admin\PaymentModeController;
 use App\Http\Controllers\Admin\PrepSheetController;
 use App\Http\Controllers\Admin\PromoController;
 use App\Http\Controllers\Auth\CustomerAuthController;
@@ -226,6 +227,11 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function (): void {
         Route::post('orders', [AdminOrderController::class, 'store'])->name('orders.store');
         Route::post('orders/{order}/status', [AdminOrderController::class, 'transition'])->name('orders.status');
         Route::post('orders/{order}/reject-cancellation', [AdminOrderController::class, 'rejectCancellation'])->name('orders.reject-cancellation');
+
+        // Whether checkout takes money. Audited, because "who put this in simulate mode"
+        // is the first question if the takings ever look wrong.
+        Route::get('payment-mode', [PaymentModeController::class, 'show'])->name('payment-mode.show');
+        Route::put('payment-mode', [PaymentModeController::class, 'update'])->name('payment-mode.update');
         Route::get('orders/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
 
         // Courier fields and the internal note. Deliberately narrow — see the controller.
