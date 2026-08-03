@@ -45,6 +45,18 @@
         -->
         <env name="SMS_DRIVER" value="log"/>
         <env name="SMSONLINEGH_API_KEY" value=""/>
+        <!--
+            ⚠️ BLANK ON PURPOSE, AND THE SUITE IS WRONG WITHOUT IT. Several tests assert what
+            happens with NO gateway configured — the webhook returning 503 rather than
+            accepting an unverifiable write — and they were reading whatever the developer
+            happened to have in `.env`. The moment a real key landed there, the suite went red
+            on a test about the opposite situation. Tests that need keys call `withKeys()`.
+
+            Same reasoning as SMSONLINEGH_API_KEY above, which had already learnt it.
+        -->
+        <env name="PAYSTACK_SECRET_KEY" value=""/>
+        <env name="PAYSTACK_PUBLIC_KEY" value=""/>
+        <env name="PAYSTACK_ORDER_EMAIL_DOMAIN" value="example.com"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

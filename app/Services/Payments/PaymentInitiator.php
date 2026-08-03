@@ -146,9 +146,33 @@ final class PaymentInitiator
         return 'mefs_'.$order->order_number.'_'.Str::lower(Str::random(12));
     }
 
+    /**
+     * Who Paystack addresses the transaction to.
+     *
+     * Paystack requires an email and most of her customers do not have one on file, so this
+     * builds one per order. It is unique, it never pretends to be the customer's, and it does
+     * not invent `ama@gmail.com`, which would be worse than being obviously synthetic.
+     *
+     * ⚠️ THE DOMAIN MUST BE REAL, AND THIS IS THE BUG THAT TAUGHT US SO.
+     *
+     * It used to be a hardcoded `@orders.mefs.local`. Paystack validates the address and
+     * refuses a reserved TLD (RFC 6762), so every live `initialize` came back 400 "Invalid
+     * Email Address Passed" — which `begin()` correctly reports as unavailable, and which the
+     * storefront correctly renders as "online payment isn't available right now". Three
+     * correct steps built on one address that could never work, and the sentence on screen
+     * pointed at the API keys, which were fine the whole time.
+     *
+     * The domain now comes from config, defaulting to the storefront's own host. See
+     * `config/paystack.php`.
+     */
     private function email(Order $order): string
     {
-        return $order->customer?->email
-            ?: 'order-'.Str::lower($order->order_number).'@orders.mefs.local';
+        $onFile = $order->customer?->email;
+
+        if (is_string($onFile) && $onFile !== '') {
+            return $onFile;
+        }
+
+        return 'order-'.Str::lower($order->order_number).'@'.config('paystack.order_email_domain');
     }
 }

@@ -40,6 +40,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The address a receipt is addressed to
+    |--------------------------------------------------------------------------
+    |
+    | Paystack requires an email on every transaction and most of her customers
+    | have none on file, so `PaymentInitiator` builds one per order.
+    |
+    | ⚠️ IT HAS TO BE A REAL, PUBLICLY-RESOLVABLE DOMAIN, AND THIS COST A LIVE
+    | AFTERNOON. The first version used `@orders.mefs.local`, which is tidy and
+    | obviously synthetic and which Paystack refuses outright — every live
+    | initialize came back 400 "Invalid Email Address Passed", because `.local`
+    | is reserved by RFC 6762. On the storefront that surfaced as "online payment
+    | isn't available right now", which pointed at the keys, which were fine.
+    |
+    | Defaults to the storefront's own host — a domain she owns, which resolves,
+    | and which is already correct in every environment that has a FRONTEND_URL.
+    | Set PAYSTACK_ORDER_EMAIL_DOMAIN to override it.
+    |
+    */
+
+    'order_email_domain' => env('PAYSTACK_ORDER_EMAIL_DOMAIN')
+        ?: (parse_url((string) env('FRONTEND_URL', ''), PHP_URL_HOST)
+            ?: parse_url((string) env('APP_URL', ''), PHP_URL_HOST)),
+
+    /*
+    |--------------------------------------------------------------------------
     | Currency
     |--------------------------------------------------------------------------
     |
