@@ -50,9 +50,23 @@ final class PaymentController extends Controller
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d'],
             'search' => ['nullable', 'string', 'max:80'],
-            'unsettled' => ['nullable', 'boolean'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
+
+        /*
+         * ⚠️ NOT VALIDATED AS `boolean`, AND ITS ABSENCE FROM THE RULES ABOVE IS THE FIX.
+         *
+         * A query string has no booleans, only text. Axios serialises `unsettled: true` as
+         * `unsettled=true`, and Laravel's `boolean` rule accepts true, false, 1, 0, "1" and
+         * "0" — but not "true". So the screen's own default filter, the one it opens on,
+         * came back 422 "The unsettled field must be true or false" on every single load,
+         * and the back office rendered that as "Couldn't load payments. Check the API is
+         * running." The API was running. It was refusing its only client's default request.
+         *
+         * `$request->boolean()` reads the forms a query string actually carries. The rule
+         * belonged to a JSON body that this endpoint never had.
+         */
+        $unsettled = $request->boolean('unsettled');
 
         $query = Payment::query()
             ->with(['order:id,order_number,contact_name'])
@@ -71,7 +85,7 @@ final class PaymentController extends Controller
              * every abandoned checkout as money she is owed.
              */
             ->when(
-                $filters['unsettled'] ?? false,
+                $unsettled,
                 fn ($q) => $q->completed()->whereNull('settled_amount'),
             );
 

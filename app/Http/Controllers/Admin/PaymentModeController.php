@@ -35,9 +35,23 @@ final class PaymentModeController extends Controller
 
     public function __construct(private readonly AuditLog $audit) {}
 
+    /**
+     * ⚠️ READING IT IS NOT `settings.manage`, AND THAT DISTINCTION IS A SAFETY CONTROL.
+     *
+     * It used to be. The `admin` role deliberately holds no `settings.manage` — see
+     * `Permission::byRole()`, which is right to withhold it — so the kitchen's own account
+     * got a 403 here. That is not a small inconvenience: `PaymentModeBanner` renders on
+     * every back-office screen and reads this endpoint, so for the one person who runs the
+     * shop the "PAYMENTS ARE IN SIMULATE MODE" warning could never appear at all. A banner
+     * whose whole purpose is that it cannot be missed was failing closed and silently.
+     *
+     * The state of the till is not a setting to her, it is a fact about her shop, and anyone
+     * who can see an order must be able to see whether it is being charged for. Changing it
+     * is still `settings.manage`, below.
+     */
     public function show(Request $request): JsonResponse
     {
-        $this->authorizePermission($request, Permission::SettingsManage);
+        $this->authorizePermission($request, Permission::OrdersView);
 
         return ApiResponse::success(
             ['mode' => SystemSetting::get('payment_mode', 'live')],
