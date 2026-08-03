@@ -67,6 +67,18 @@ final class Insights
     {
         return Order::query()
             ->holdingCapacity()
+            /*
+             * ⚠️ REHEARSAL ORDERS ARE NOT MONEY, AND THIS IS THE ONLY LINE STOPPING THEM
+             * BEING COUNTED AS SOME.
+             *
+             * A simulated payment marks its order paid — that is the point, it is how the
+             * lifecycle gets walked. But every figure on the money screen sums `orders`, so
+             * without this a demo run would show up in her takings, in the same column as
+             * real takings, with nothing to tell them apart. The exclusion lives at the
+             * source of the collection rather than in each of the sums below, so a figure
+             * added later cannot forget it.
+             */
+            ->where('is_simulated', false)
             ->where(function ($query) use ($from, $to): void {
                 $query
                     ->whereBetween('fulfil_date', [$from->toDateString(), $to->toDateString()])

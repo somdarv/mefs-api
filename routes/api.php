@@ -20,6 +20,7 @@ use App\Http\Controllers\CustomerOrderController;
 use App\Http\Controllers\CycleController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MenuController;
+use App\Http\Controllers\OrderCancellationController;
 use App\Http\Controllers\OrderPaymentController;
 use App\Http\Controllers\OrderTrackingController;
 use App\Http\Controllers\PaystackWebhookController;
@@ -134,6 +135,16 @@ Route::middleware('throttle:60,1')->group(function (): void {
      */
     Route::post('orders/{token}/payment', [OrderPaymentController::class, 'start'])->name('orders.pay');
     Route::post('orders/{token}/payment/verify', [OrderPaymentController::class, 'verify'])->name('orders.pay.verify');
+    // Settles a rehearsal, and refuses unless `payment_mode` is `simulate` AND the payment
+    // row is itself simulated. See the controller — it has four guards and they all matter.
+    Route::post('orders/{token}/payment/simulate', [OrderPaymentController::class, 'simulate'])->name('orders.pay.simulate');
+
+    /*
+     * The customer ASKING to cancel — it does not cancel. A pre-order kitchen may already
+     * have shopped for an order placed eleven days ago, so it goes to `cancel_requested` and
+     * waits for her answer. Same token-as-proof reasoning as the tracking route above.
+     */
+    Route::post('orders/{token}/cancel-request', OrderCancellationController::class)->name('orders.cancel-request');
 });
 
 /*

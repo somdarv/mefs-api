@@ -8,10 +8,12 @@ use App\Http\Resources\OrderResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\SystemSetting;
 use App\Services\Payments\PaymentInitiator;
 use App\Services\Payments\PaymentRecorder;
 use App\Services\Payments\PaystackClient;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * Paying for an order that already exists, and finding out whether it worked.
@@ -108,6 +110,69 @@ final class OrderPaymentController extends Controller
             'paid' => $order->is_paid,
             'order' => new OrderResource($order->load('items')),
         ], $order->is_paid ? 'Paid' : 'Not paid yet');
+    }
+
+    /**
+     * Settle a SIMULATED payment, one way or the other.
+     *
+     * ⚠️ FOUR GUARDS, AND EVERY ONE OF THEM IS LORD-BEARING. This endpoint marks an order
+     * paid without money changing hands, so it must be unreachable by anyone who is not
+     * deliberately rehearsing:
+     *
+     *   1. `payment_mode` must be `simulate` RIGHT NOW. Flipping back to live makes a
+     *      half-finished rehearsal un-settleable, which is the correct direction to fail.
+     *   2. the payment row must itself be `is_simulated`. A real Paystack attempt can never
+     *      be settled through here, whatever the mode says.
+     *   3. the reference must match, so it settles the attempt the caller names rather than
+     *      "the latest one", which during a rehearsal is ambiguous.
+     *   4. it goes through `PaymentRecorder`, the same path as the webhook — including the
+     *      amount check and the idempotency lock. A simulation that bypassed the recorder
+     *      would rehearse nothing worth rehearsing.
+     */
+    public function simulate(Request $request, string $token): JsonResponse
+    {
+        $order = $this->find($token);
+
+        if (SystemSetting::get('payment_mode', 'live') !== 'simulate') {
+            return ApiResponse::error('Payment simulation is switched off.', 422);
+        }
+
+        $data = $request->validate([
+            'reference' => ['required', 'string'],
+            'outcome' => ['required', 'in:success,failed'],
+        ]);
+
+        $payment = Payment::query()
+            ->where('order_id', $order->id)
+            ->where('reference', $data['reference'])
+            ->where('is_simulated', true)
+            ->first();
+
+        if ($payment === null) {
+            return ApiResponse::error('No simulated payment to settle.', 404);
+        }
+
+        if ($data['outcome'] === 'failed') {
+            $this->recorder->failed($payment, ['simulated' => true, 'status' => 'failed']);
+        } else {
+            // Shaped like Paystack's `data` object, because the recorder reads it as one —
+            // amount included, so the amount check is exercised rather than sidestepped.
+            $this->recorder->succeeded($payment, [
+                'simulated' => true,
+                'status' => 'success',
+                'amount' => $payment->amount,
+                'channel' => 'simulated',
+                'fees' => 0,
+                'paid_at' => now()->toIso8601String(),
+            ]);
+        }
+
+        $order->refresh();
+
+        return ApiResponse::success([
+            'paid' => $order->is_paid,
+            'order' => new OrderResource($order->load('items')),
+        ], $order->is_paid ? 'Simulated payment recorded' : 'Simulated payment failed');
     }
 
     private function find(string $token): Order

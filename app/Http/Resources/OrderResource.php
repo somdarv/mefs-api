@@ -66,6 +66,13 @@ class OrderResource extends JsonResource
             'payment_method' => $order->payment_method,
             'payment_status' => $order->payment_status->value,
             'is_paid' => $order->is_paid,
+            /*
+             * Sent to the customer too, deliberately. This order was settled without money,
+             * and every surface that shows it as paid should be able to say so — a
+             * "paid" badge that might be a rehearsal is worse than no badge.
+             */
+            'is_simulated' => $order->is_simulated,
+            'paid_at' => $order->payments()->whereNotNull('paid_at')->max('paid_at'),
 
             'contact_name' => $order->contact_name,
             'contact_phone' => $order->contact_phone,

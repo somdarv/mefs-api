@@ -175,6 +175,41 @@ final class OrderStatusMachine
     }
 
     /**
+     * The customer asks to cancel. The kitchen answers.
+     *
+     * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+     *
+     * `cancel_requested` and `rejectCancellation()` were built as a matched pair, and only
+     * the answering half was ever reachable. There was no customer route, so the state could
+     * only be entered from the back office's own status buttons — which meant she requested
+     * a cancellation on her own order and then approved her own request. The three columns
+     * recording WHO asked and WHY were never written by anything; they were only ever
+     * cleared again on rejection.
+     *
+     * This is the missing half, and it is what those columns are for. The order does not
+     * cancel — it waits, visibly, in a state the pipeline surfaces as needing an answer,
+     * because a pre-order kitchen may already have shopped for it.
+     *
+     * ⚠️ IT GOES THROUGH `transition()`, WHICH IS WHAT STORES `cancel_previous_status`.
+     * Writing the status directly here would leave a rejection with nowhere to return to,
+     * and `rejectCancellation()` refuses rather than guessing — so the order would be stuck
+     * in `cancel_requested` with no way out but SQL.
+     *
+     * @throws IllegalTransition
+     */
+    public function requestCancellation(Order $order, string $requestedBy, ?string $reason = null): Order
+    {
+        $order = $this->transition($order, OrderStatus::CancelRequested, null, $reason);
+
+        $order->cancel_requested_by = $requestedBy;
+        $order->cancel_requested_at = now();
+        $order->cancel_request_reason = $reason;
+        $order->save();
+
+        return $order;
+    }
+
+    /**
      * Reject a cancellation request: put the order back exactly where it was.
      *
      * ⚠️ NOT A TRANSITION, AND DELIBERATELY NOT ROUTED THROUGH ONE. The destination comes

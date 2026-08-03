@@ -26,6 +26,7 @@ class Payment extends Model
     protected $fillable = [
         'order_id',
         'provider',
+        'is_simulated',
         'reference',
         'amount',
         'currency',
@@ -43,6 +44,7 @@ class Payment extends Model
         return [
             'status' => PaymentStatus::class,
             'payload' => 'array',
+            'is_simulated' => 'bool',
             'amount' => 'int',
             'fee' => 'int',
             'settled_amount' => 'int',

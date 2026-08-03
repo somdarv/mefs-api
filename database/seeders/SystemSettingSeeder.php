@@ -109,6 +109,29 @@ class SystemSettingSeeder extends Seeder
                 'description' => 'ISO weekdays pre-filled when creating a cycle. Mon-Fri.',
             ],
 
+            // ── Payments ──────────────────────────────────────────────────────
+            /*
+             * ⚠️ `simulate` SETTLES ORDERS WITHOUT TAKING MONEY. It exists so the whole
+             * lifecycle can be walked — and demonstrated — without a card, and it defaults
+             * to `live` so the shop can only ever fall towards actually charging.
+             *
+             * Everything it touches is marked: the payment row and the order both carry
+             * `is_simulated`, `Money\Insights` excludes those orders from every figure, and
+             * the back office shows a standing banner while it is on. Fake money that looked
+             * real in her takings would be a worse bug than having no simulation at all.
+             *
+             * `is_public` is FALSE. The storefront has no business knowing, and a customer
+             * who could read this could tell whether their card was about to be charged.
+             */
+            [
+                'key' => 'payment_mode',
+                'value' => 'live',
+                'cast' => 'string',
+                'group' => 'payments',
+                'is_public' => false,
+                'description' => 'live = charge through Paystack. simulate = settle without money, for testing.',
+            ],
+
             // ── Pantry ────────────────────────────────────────────────────────
             // Shelf-stable goods ship nationwide and are NOT tied to a cooking date.
             [

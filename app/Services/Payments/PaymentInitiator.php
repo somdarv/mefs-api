@@ -7,6 +7,7 @@ namespace App\Services\Payments;
 use App\Enums\PaymentStatus;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\SystemSetting;
 use Illuminate\Support\Str;
 
 /**
@@ -31,6 +32,10 @@ final class PaymentInitiator
     {
         if ($order->is_paid) {
             return PaymentAttempt::refused('already_paid');
+        }
+
+        if (SystemSetting::get('payment_mode', 'live') === 'simulate') {
+            return $this->beginSimulated($order);
         }
 
         if (! $this->paystack->isConfigured()) {
@@ -86,6 +91,46 @@ final class PaymentInitiator
         $payment->update(['payload' => $result['data'] ?? []]);
 
         return PaymentAttempt::started($payment, (string) $result['authorization_url']);
+    }
+
+    /**
+     * A payment that will be settled without a gateway, so the lifecycle can be walked.
+     *
+     * ⚠️ THE ORDER IS MARKED BEFORE ANYTHING IS SETTLED, NOT AFTER.
+     *
+     * `orders.is_simulated` is set here, at the moment the attempt begins, rather than when
+     * one succeeds. `Money\Insights` sums `orders`, and an abandoned test order that was
+     * never flagged would still land in the "unpaid" figure — smaller than counting fake
+     * revenue as real, but the same class of lie. Anything that has touched simulation is
+     * out of the numbers from the first moment it does.
+     *
+     * The checkout URL points at our own storefront rather than Paystack's. That page offers
+     * "paid" and "failed", because the whole point of a rehearsal is to rehearse the sad
+     * path too — an order that cannot fail to pay has not been tested.
+     */
+    private function beginSimulated(Order $order): PaymentAttempt
+    {
+        $payment = Payment::query()->create([
+            'order_id' => $order->id,
+            // NOT 'paystack'. A settlement import matching on provider must never pick these
+            // up, and a row claiming to be from a gateway it never reached is a lie the
+            // reconciliation screen would have to unpick later.
+            'provider' => 'simulated',
+            'is_simulated' => true,
+            'reference' => $this->reference($order),
+            'amount' => $order->total,
+            'currency' => config('paystack.currency', 'GHS'),
+            'status' => PaymentStatus::Pending->value,
+        ]);
+
+        $order->is_simulated = true;
+        $order->save();
+
+        return PaymentAttempt::started(
+            $payment,
+            rtrim((string) config('paystack.callback_url'), '/')
+                .'/'.$order->tracking_token.'?simulate='.$payment->reference,
+        );
     }
 
     /**

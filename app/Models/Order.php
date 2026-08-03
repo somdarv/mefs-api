@@ -71,6 +71,7 @@ class Order extends Model
 
             'is_manual_entry' => 'bool',
             'is_paid' => 'bool',
+            'is_simulated' => 'bool',
             'hold_expired' => 'bool',
 
             'slot_hold_expires_at' => 'immutable_datetime',
