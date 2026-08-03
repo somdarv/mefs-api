@@ -126,8 +126,79 @@ final class CycleBuilder
         });
     }
 
-    /** One row per date, each pre-filled from the weekly rotation. */
-    private function fillDays(OrderCycle $cycle): void
+    /**
+     * Move a DRAFT cycle's cooking window, keeping the days that survive the move.
+     *
+     * ── WHY THIS IS DRAFT-ONLY, AND WHY IT EXISTS AT ALL ──────────────────────
+     *
+     * `update()` refuses to touch the service window, for a good reason: changing which
+     * dates a cycle covers means adding and removing day rows, and dropping a day that
+     * orders point at would orphan them. That reason is entirely about cycles customers can
+     * reach. A draft is invisible to `CycleGate` whatever its dates say, so no order can
+     * exist against one — and "I typed the wrong week" is otherwise only fixable by deleting
+     * the cycle and rebuilding the matrix by hand.
+     *
+     * So the guard stays exactly where it was for anything published, and drafts get to be
+     * edited like the unfinished things they are. The caller enforces that; this method
+     * asserts it too rather than trusting it, because the cost of being wrong is orphaned
+     * order lines.
+     *
+     * ── DATES THAT SURVIVE ARE NOT REBUILT ────────────────────────────────────
+     *
+     * Shifting 9–14 Aug to 10–15 Aug keeps five of the six days. Deleting and re-creating
+     * the lot would be less code and would silently discard every matrix edit she has made
+     * to those five — which is the work the screen exists to capture. Only the dates that
+     * genuinely leave are deleted, and only the dates that genuinely arrive are built.
+     */
+    public function reshape(OrderCycle $cycle, string $startDate, string $endDate): OrderCycle
+    {
+        if ($cycle->status !== CycleStatus::Draft) {
+            throw new \LogicException('Only a draft cycle may have its service window reshaped.');
+        }
+
+        return DB::transaction(function () use ($cycle, $startDate, $endDate): OrderCycle {
+            $start = CarbonImmutable::parse($startDate, 'UTC')->startOfDay();
+            $end = CarbonImmutable::parse($endDate, 'UTC')->startOfDay();
+
+            $cycle->update([
+                'service_start_date' => $start->toDateString(),
+                'service_end_date' => $end->toDateString(),
+            ]);
+
+            // Refreshed so `serviceDates()` reads the window we just wrote, not the one the
+            // instance was loaded with.
+            $cycle->refresh();
+
+            $wanted = $cycle->serviceDates();
+            $existing = $cycle->days()->get()->keyBy(fn (CycleDay $day) => $day->date->toDateString());
+
+            // Gone: dates no longer in the window. Items go with them via the FK cascade.
+            foreach ($existing as $date => $day) {
+                if (! in_array($date, $wanted, true)) {
+                    $day->delete();
+                }
+            }
+
+            // Arrived: dates the window did not previously cover.
+            $this->fillDays($cycle, array_values(array_filter(
+                $wanted,
+                fn (string $date) => ! $existing->has($date),
+            )));
+
+            return $cycle->fresh(['days.items']);
+        });
+    }
+
+    /**
+     * One row per date, each pre-filled from the weekly rotation.
+     *
+     * `$dates` narrows it to a subset, which is what `reshape()` needs — creating a row for
+     * a date that already has one would collide on the unique index and, worse, would mean
+     * re-deriving a matrix she has already edited.
+     *
+     * @param  list<string>|null  $dates  Null for the cycle's whole window.
+     */
+    private function fillDays(OrderCycle $cycle, ?array $dates = null): void
     {
         // Meals only. Pantry goods are shelf-stable and belong to no cooking day — they
         // ship nationwide whenever, which is why they carry an empty rotation.
@@ -137,7 +208,7 @@ final class CycleBuilder
             ->orderBy('position')
             ->get();
 
-        foreach ($cycle->serviceDates() as $date) {
+        foreach ($dates ?? $cycle->serviceDates() as $date) {
             $weekday = CarbonImmutable::parse($date, 'UTC')->dayOfWeekIso;
 
             $day = CycleDay::query()->create([

@@ -226,6 +226,158 @@ final class CycleAdminTest extends TestCase
             ->assertOk();
     }
 
+    // ── Moving the cooking window ─────────────────────────────────────────────
+
+    public function test_she_can_move_a_drafts_cooking_dates(): void
+    {
+        $cycle = $this->existing();
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", [
+                'service_start_date' => '2026-08-06',
+                'service_end_date' => '2026-08-11',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.service_window.start_date', '2026-08-06')
+            ->assertJsonPath('data.service_window.end_date', '2026-08-11')
+            ->assertJsonPath('data.service_window.day_count', 6);
+
+        $dates = $cycle->fresh('days')->days->pluck('date')
+            ->map(fn ($d) => $d->toDateString())->sort()->values()->all();
+
+        $this->assertSame(
+            ['2026-08-06', '2026-08-07', '2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11'],
+            $dates,
+        );
+    }
+
+    /**
+     * The whole reason reshape is surgical rather than a delete-and-rebuild: the matrix is
+     * the work, and a date that survives the move must keep the edits made against it.
+     */
+    public function test_moving_the_window_keeps_the_matrix_on_days_that_survive(): void
+    {
+        $cycle = $this->existing();
+
+        $survivor = $cycle->days->firstWhere(fn ($d) => $d->date->toDateString() === '2026-08-06');
+        $meal = MenuItem::query()->first();
+        $survivor->items()->where('menu_item_id', $meal->id)
+            ->update(['is_available' => true, 'portion_capacity' => 42]);
+        $survivor->update(['kitchen_note' => 'Prep the beans']);
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", [
+                'service_start_date' => '2026-08-06',
+                'service_end_date' => '2026-08-14',
+            ])
+            ->assertOk();
+
+        $kept = $cycle->fresh('days.items')->days
+            ->firstWhere(fn ($d) => $d->date->toDateString() === '2026-08-06');
+
+        $this->assertSame('Prep the beans', $kept->kitchen_note);
+        $this->assertSame(42, $kept->items->firstWhere('menu_item_id', $meal->id)->portion_capacity);
+
+        // And the dates that arrived got built, pre-filled like any new day.
+        $this->assertNotNull(
+            $cycle->fresh('days')->days->firstWhere(fn ($d) => $d->date->toDateString() === '2026-08-14'),
+        );
+    }
+
+    /**
+     * The guard that was there before this feature, and still is. A published cycle can have
+     * orders against it, and dropping a day they point at would orphan them.
+     */
+    public function test_a_published_cycles_cooking_dates_cannot_move(): void
+    {
+        $cycle = $this->existing();
+        $cycle->days->each(fn ($d) => $d->items()->limit(1)->update(['is_available' => true]));
+
+        $this->asAdmin()->postJson("/api/v1/admin/cycles/{$cycle->id}/publish")->assertOk();
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", [
+                'service_start_date' => '2026-08-06',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('service_start_date');
+
+        $this->assertSame('2026-08-05', $cycle->fresh()->service_start_date->toDateString());
+    }
+
+    /** Its ordering window still moves, though — that is what the switch's schedule reads. */
+    public function test_a_published_cycles_ordering_window_still_moves(): void
+    {
+        $cycle = $this->existing();
+        $cycle->days->each(fn ($d) => $d->items()->limit(1)->update(['is_available' => true]));
+        $this->asAdmin()->postJson("/api/v1/admin/cycles/{$cycle->id}/publish")->assertOk();
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", [
+                'orders_close_at' => '2026-08-04T21:00:00Z',
+            ])
+            ->assertOk();
+
+        $this->assertSame(
+            '2026-08-04 21:00:00',
+            $cycle->fresh()->orders_close_at->utc()->format('Y-m-d H:i:s'),
+        );
+    }
+
+    /**
+     * ⚠️ THE PARTIAL-WRITE CASE. The cross-window rule can only be judged after both windows
+     * are settled, so rejecting it happens after the ordering window has already been
+     * written. Without the transaction, the refusal would itself leave the cycle in the
+     * inconsistent state it exists to prevent.
+     */
+    public function test_a_rejected_cross_window_edit_leaves_nothing_behind(): void
+    {
+        $cycle = $this->existing();
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", [
+                'orders_close_at' => '2026-08-20T18:00:00Z',
+                'service_end_date' => '2026-08-10',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('orders_close_at');
+
+        $fresh = $cycle->fresh('days');
+
+        // Neither half landed.
+        $this->assertSame('2026-08-04 18:00:00', $fresh->orders_close_at->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-12', $fresh->service_end_date->toDateString());
+        $this->assertCount(8, $fresh->days);
+    }
+
+    public function test_the_last_cooking_day_cannot_move_before_the_first(): void
+    {
+        $cycle = $this->existing();
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", ['service_end_date' => '2026-08-01'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('service_end_date');
+    }
+
+    public function test_moving_a_window_onto_another_cycle_is_refused(): void
+    {
+        $cycle = $this->existing();
+
+        app(CycleBuilder::class)->create($this->payload([
+            'name' => 'Week of 20 Aug',
+            'service_start_date' => '2026-08-20',
+            'service_end_date' => '2026-08-26',
+            'orders_open_at' => '2026-08-14T00:00:00Z',
+            'orders_close_at' => '2026-08-19T18:00:00Z',
+        ]));
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/cycles/{$cycle->id}", ['service_end_date' => '2026-08-22'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('service_start_date');
+    }
+
     // ── Days and the matrix ───────────────────────────────────────────────────
 
     public function test_she_can_close_a_single_day(): void

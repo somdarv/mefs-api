@@ -88,23 +88,89 @@ final class CycleController extends Controller
 
         abort_unless($cycle->status->isEditable(), 422, 'A completed or archived cycle cannot be edited.');
 
+        $isDraft = $cycle->status === CycleStatus::Draft;
+
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:120'],
             'orders_open_at' => ['sometimes', 'date'],
             'orders_close_at' => ['sometimes', 'date'],
             'order_capacity' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'note' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'service_start_date' => ['sometimes', 'date_format:Y-m-d'],
+            'service_end_date' => ['sometimes', 'date_format:Y-m-d', 'after_or_equal:service_start_date'],
         ]);
 
-        // The service window is deliberately NOT editable here. Changing which dates a
-        // cycle covers means adding or removing day rows and their matrices, and doing that
-        // to a cycle with orders against it would orphan them. Create a new cycle instead.
+        /*
+         * ⚠️ THE SERVICE WINDOW MOVES ONLY WHILE THE CYCLE IS A DRAFT.
+         *
+         * Changing which dates a cycle covers means adding and removing day rows, and
+         * dropping a day that orders point at would orphan them. A draft cannot have orders
+         * — `CycleGate` refuses an unpublished cycle before it reads a single date — so the
+         * hazard is exactly the published case, and only that case is refused. Fixing a
+         * mistyped week used to mean deleting the cycle and rebuilding the matrix by hand.
+         */
+        $reshaping = array_key_exists('service_start_date', $data)
+            || array_key_exists('service_end_date', $data);
+
+        if ($reshaping && ! $isDraft) {
+            throw ValidationException::withMessages([
+                'service_start_date' => [
+                    'Cooking dates cannot move once a cycle is published. Duplicate it instead.',
+                ],
+            ]);
+        }
+
         $this->assertOrderingWindowOrdered(
             $data['orders_open_at'] ?? $cycle->orders_open_at->toIso8601String(),
             $data['orders_close_at'] ?? $cycle->orders_close_at->toIso8601String(),
         );
 
-        $cycle->update($data);
+        /*
+         * ⚠️ ONE TRANSACTION, BECAUSE A CHECK STILL FAILS AFTER A WRITE.
+         *
+         * The cross-window rule below ("orders cannot close after the last cooking day")
+         * can only be judged once both windows are settled, which is after the ordering
+         * window has been written and the days reshaped. Without the transaction, rejecting
+         * it would leave the ordering window moved and the cooking window not — the exact
+         * inconsistency the rule exists to prevent, produced by the rule refusing it.
+         */
+        $cycle = DB::transaction(function () use ($cycle, $data, $reshaping): OrderCycle {
+            $cycle->update(
+                collect($data)->except(['service_start_date', 'service_end_date'])->all(),
+            );
+
+            if ($reshaping) {
+                $start = $data['service_start_date'] ?? $cycle->service_start_date->toDateString();
+                $end = $data['service_end_date'] ?? $cycle->service_end_date->toDateString();
+
+                // `after_or_equal` only fires when both dates are in the request. Moving the
+                // start alone, past the existing end, has to be caught here.
+                if (strtotime($end) < strtotime($start)) {
+                    throw ValidationException::withMessages([
+                        'service_end_date' => ['The last cooking day cannot be before the first.'],
+                    ]);
+                }
+
+                $cycle = $this->guardAgainstOverlap(
+                    fn () => $this->builder->reshape($cycle, $start, $end),
+                );
+            }
+
+            $cycle->refresh();
+
+            // The same nonsense the create path refuses: taking orders for food already
+            // cooked and given away. Judged against whatever both windows ended up as.
+            $closesAfterCooking = $cycle->orders_close_at->timestamp
+                > strtotime($cycle->service_end_date->toDateString().' 23:59:59');
+
+            if ($closesAfterCooking) {
+                throw ValidationException::withMessages([
+                    'orders_close_at' => ['Orders cannot close after the last cooking day.'],
+                ]);
+            }
+
+            return $cycle;
+        });
 
         return ApiResponse::success(
             new CycleResource($cycle->fresh(['days.items'])),
