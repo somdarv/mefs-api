@@ -107,25 +107,36 @@ enum Permission: string
      */
     public static function byRole(): array
     {
-        $admin = [
-            self::OrdersView, self::OrdersCreate, self::OrdersAdvance,
-            self::OrdersCancel, self::OrdersRefund,
-            self::CyclesView, self::CyclesManage, self::CyclesOverride,
-            self::MenuView, self::MenuManage, self::MenuPrice,
-            self::PaymentsView, self::PaymentsReconcile, self::AnalyticsView,
-            self::PromosView, self::PromosManage, self::BannersManage,
-            self::CustomersView,
-        ];
-
         return [
-            // The owner holds everything, including staff management and settings.
             Role::TechAdmin->value => self::cases(),
 
-            // She runs the kitchen. Note what is absent: staff.manage and settings.manage.
-            // She is the only staff member today, so neither is needed, and a permission
-            // granted "just in case" is how the original's takeover worked.
-            Role::Admin->value => $admin,
+            /*
+             * ⚠️ THE SAME LIST AS TechAdmin, AND THIS REVERSES AN EARLIER DECISION.
+             *
+             * `admin` used to be short of `staff.manage` and `settings.manage`, on the
+             * argument that she is the only staff member so neither is needed and a grant
+             * "just in case" is how the original's takeover worked. That argument was about
+             * an org with layers. This one has two accounts and one person behind both:
+             * `admin` IS the owner here, so withholding a permission from her did not
+             * restrain anybody — it only meant the shop's own account could not switch its
+             * own till off, and got a red error for trying.
+             *
+             * ⚠️ WHAT STILL PROTECTS THIS IS NOT THE PERMISSION LIST. It never was. The
+             * original's takeover was `manage_employees` with NO CEILING, and the ceiling is
+             * what was actually missing:
+             *
+             *   - no actor assigns a role at or above their own, so an admin can mint
+             *     another admin but never a tech_admin (`RoleCeilingTest`)
+             *   - nobody edits their own role or permission fields (the self-edit guard)
+             *   - `settings.manage` writes are audited with who and when
+             *
+             * All three hold regardless of what is in this array. If the business ever grows
+             * a second staff member who is not the owner, the answer is a fourth role, not
+             * clawing permissions back off this one.
+             */
+            Role::Admin->value => self::cases(),
 
+            // `customer` appears with an empty list on purpose — see the docblock.
             Role::Customer->value => [],
         ];
     }

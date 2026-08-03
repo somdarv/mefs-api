@@ -148,16 +148,34 @@ final class RoleCeilingTest extends TestCase
     }
 
     /**
-     * She is the admin, and deliberately does NOT hold staff.manage or settings.manage —
-     * she is the only staff member, so a grant "just in case" is pure attack surface. This
-     * is exactly the shape of the original's mistake.
+     * ⚠️ SHE HOLDS EVERYTHING NOW, AND WHAT MAKES THAT SAFE IS EVERY TEST ABOVE THIS ONE.
+     *
+     * This assertion used to be the opposite: `admin` was held short of `staff.manage` and
+     * `settings.manage` on the argument that a grant "just in case" is how the takeover
+     * worked. That argument was about an organisation with layers. This business has two
+     * accounts and one person behind both, so withholding a permission restrained nobody —
+     * it only meant the shop's own account could not switch its own till off.
+     *
+     * The takeover was never really about which permission was held. It was
+     * `manage_employees` with NO CEILING AND NO SELF-EDIT GUARD, and both of those now
+     * exist and are pinned by the tests above — every one of which still passes with
+     * `staff.manage` in her hand. That is the point of asserting it here, next to them: an
+     * admin holding staff management still cannot promote to tech_admin, still cannot mint
+     * another admin, and still cannot touch her own role.
      */
-    public function test_the_admin_role_does_not_hold_staff_management(): void
+    public function test_the_admin_role_holds_everything_and_the_ceiling_still_binds(): void
     {
         $admin = User::factory()->admin()->create();
 
-        $this->assertFalse($admin->can('staff.manage'));
-        $this->assertFalse($admin->can('settings.manage'));
+        $this->assertTrue($admin->can('settings.manage'), 'She must be able to switch her own till off.');
+        $this->assertTrue($admin->can('staff.manage'));
         $this->assertTrue($admin->can('cycles.manage'), 'She must be able to run her kitchen.');
+
+        // The guard that actually matters, restated where the grant is: holding staff.manage
+        // is not the same as being able to use it to climb.
+        $this->assertFalse(
+            Gate::forUser($admin)->allows('assignRole', [User::factory()->customer()->create(), Role::TechAdmin]),
+            'The ceiling must hold even when the permission behind it is held.',
+        );
     }
 }

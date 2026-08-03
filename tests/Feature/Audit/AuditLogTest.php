@@ -178,15 +178,28 @@ final class AuditLogTest extends TestCase
     // ── Reading it ────────────────────────────────────────────────────────────
 
     /**
-     * ⚠️ `audit.view` IS NOT ON THE ADMIN ROLE.
+     * ⚠️ SHE CAN READ IT NOW, AND THIS IS THE GRANT WITH THE BEST ARGUMENT AGAINST IT.
      *
-     * The log exists partly to record what she does, and a log its own subject can read and
-     * curate answers a different question from the one it was built for. She holds
-     * `cycles.override` — she can perform the act — and cannot read the record of it.
+     * The old rule was that `audit.view` stayed off the admin role, because the log exists
+     * partly to record what she does and a log its own subject can read and curate answers a
+     * different question from the one it was built for.
+     *
+     * Two things retire that argument here, and only here:
+     *
+     *  1. **She cannot curate it.** The next test pins that there is no route to edit or
+     *     delete a row, for any verb, for any account including the owner's. Reading is not
+     *     curating when the record is append-only by construction.
+     *  2. **There is no second subject.** `admin` and `tech_admin` are one person in this
+     *     business. Withholding the log from her hid her acts from nobody — the only other
+     *     account is hers as well.
+     *
+     * ⚠️ IF A SECOND OPERATOR IS EVER HIRED, THIS IS THE FIRST LINE TO REVISIT. The argument
+     * above is entirely contingent on there being one person, and it stops holding the day
+     * that changes. That is a fourth role, not a clawing-back of this one.
      */
-    public function test_the_kitchen_admin_cannot_read_the_audit_log(): void
+    public function test_both_accounts_can_read_the_audit_log(): void
     {
-        $this->asStaff($this->admin())->getJson('/api/v1/admin/audit')->assertForbidden();
+        $this->asStaff($this->admin())->getJson('/api/v1/admin/audit')->assertOk();
         $this->forgetAuth();
 
         $this->asStaff($this->owner())->getJson('/api/v1/admin/audit')->assertOk();

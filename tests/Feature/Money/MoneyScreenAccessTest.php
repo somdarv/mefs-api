@@ -45,13 +45,13 @@ final class MoneyScreenAccessTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-08-02T10:00:00Z'));
     }
 
-    /** She runs the kitchen. Deliberately holds no `settings.manage`. */
+    /** She runs the kitchen. Holds the same list as the owner — see `Permission::byRole()`. */
     private function kitchen(): User
     {
         return User::query()->where('email', 'mef@mefs.local')->firstOrFail();
     }
 
-    /** The owner. Holds everything, which is exactly why she cannot catch a missing grant. */
+    /** The owner account. Same grants; kept distinct because the role ceiling still differs. */
     private function owner(): User
     {
         return User::query()->where('email', 'owner@mefs.local')->firstOrFail();
@@ -132,12 +132,25 @@ final class MoneyScreenAccessTest extends TestCase
             ->assertJsonPath('data.mode', 'live');
     }
 
-    /** Reading is not writing. Turning the till off stays an act of authority. */
-    public function test_the_kitchen_cannot_change_the_payment_mode(): void
+    /**
+     * ⚠️ SHE CAN CHANGE IT TOO, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+     *
+     * This test asserted the opposite when it was written, hours before this line: reading
+     * the mode was opened up and writing it was left on `settings.manage`, which the `admin`
+     * role did not hold. The result on screen was a switch that rendered, invited a press,
+     * and answered "Couldn't change it. You may not have permission." — for the account that
+     * belongs to the person who owns the shop.
+     *
+     * `admin` and `tech_admin` are one person in this business, so they now hold the same
+     * list. See `Permission::byRole()` for what still restrains an admin, and
+     * `RoleCeilingTest` for the tests that prove it.
+     */
+    public function test_the_kitchen_can_change_the_payment_mode(): void
     {
         $this->asStaff($this->kitchen())
             ->putJson('/api/v1/admin/payment-mode', ['mode' => 'simulate'])
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonPath('data.mode', 'simulate');
     }
 
     public function test_the_owner_can_change_the_payment_mode(): void
@@ -146,5 +159,21 @@ final class MoneyScreenAccessTest extends TestCase
             ->putJson('/api/v1/admin/payment-mode', ['mode' => 'simulate'])
             ->assertOk()
             ->assertJsonPath('data.mode', 'simulate');
+    }
+
+    /**
+     * ⚠️ AND IT IS STILL AUDITED, WHICH IS NOW THE ONLY THING STANDING BEHIND IT.
+     *
+     * When the permission was the restraint, the audit row was a second line of defence.
+     * With `admin` holding everything it is the first and last: "who put this in simulate
+     * mode, and when" must have an answer that is not a guess.
+     */
+    public function test_changing_the_mode_is_recorded(): void
+    {
+        $this->asStaff($this->kitchen())
+            ->putJson('/api/v1/admin/payment-mode', ['mode' => 'simulate'])
+            ->assertOk();
+
+        $this->assertDatabaseHas('audit_log', ['user_id' => $this->kitchen()->id]);
     }
 }
