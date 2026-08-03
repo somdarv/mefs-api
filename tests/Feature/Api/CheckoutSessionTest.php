@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Enums\CycleStatus;
+use App\Enums\MenuCategory;
 use App\Models\CycleDay;
 use App\Models\CycleDayItem;
 use App\Models\MenuItem;
 use App\Models\MenuOption;
 use App\Models\Order;
 use App\Models\OrderCycle;
+use App\Models\SystemSetting;
 use App\Services\Ordering\CycleBuilder;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DatabaseSeeder;
@@ -93,13 +95,59 @@ final class CheckoutSessionTest extends TestCase
         $this->assertSame(8000, $quotes['pickup']['total']);
         $this->assertSame(10000, $quotes['delivery']['total'], 'Delivery adds the ₵20 fee.');
 
-        // Not omitted — refused, with a sentence the checkout screen can show.
-        $this->assertFalse($quotes['shipping']['available']);
-        $this->assertNotEmpty($quotes['shipping']['unavailable_reason']);
+        /*
+         * Shipping is NOT OFFERED on a basket of cooked food, rather than offered and
+         * refused. It is inapplicable by composition, permanently — listing it would be
+         * explaining a service the customer never asked about. Compare
+         * `test_a_switched_off_option_is_offered_and_refused`, where an option that COULD
+         * apply is kept with a reason.
+         */
+        $this->assertArrayNotHasKey('shipping', $quotes->all());
 
         // The gate's verdict travels with the basket, reason and all.
         $this->assertSame('open', $response->json('data.ordering.status'));
         $this->assertSame('within_window', $response->json('data.ordering.reason'));
+    }
+
+    /** The other half of the rule: a basket that CAN be posted is offered the choice. */
+    public function test_shipping_is_offered_on_a_pantry_only_basket(): void
+    {
+        $jar = MenuItem::query()
+            ->where('category', MenuCategory::Pantry->value)
+            ->firstOrFail()
+            ->options()
+            ->firstOrFail();
+
+        $response = $this->postJson('/api/v1/checkout-sessions', [
+            'lines' => [['menu_item_option_id' => $jar->id, 'quantity' => 1]],
+            'cycle_day_id' => null,
+        ])->assertCreated();
+
+        $quotes = collect($response->json('data.quotes'))->keyBy('order_type');
+
+        $this->assertArrayHasKey('shipping', $quotes->all());
+        $this->assertTrue($quotes['shipping']['available']);
+    }
+
+    /**
+     * An option that COULD apply to this basket and merely happens to be off is kept, with
+     * the sentence saying so — the distinction the composition rule above must not swallow.
+     */
+    public function test_a_switched_off_option_is_offered_and_refused(): void
+    {
+        SystemSetting::query()->where('key', 'delivery_enabled')->update(['value' => '0']);
+        SystemSetting::flush();
+
+        $response = $this->postJson('/api/v1/checkout-sessions', [
+            'lines' => [['menu_item_option_id' => $this->waakye->id, 'quantity' => 1]],
+            'cycle_day_id' => $this->day->id,
+        ])->assertCreated();
+
+        $quotes = collect($response->json('data.quotes'))->keyBy('order_type');
+
+        $this->assertArrayHasKey('delivery', $quotes->all());
+        $this->assertFalse($quotes['delivery']['available']);
+        $this->assertNotEmpty($quotes['delivery']['unavailable_reason']);
     }
 
     public function test_a_guest_session_is_minted_when_the_client_brings_none(): void

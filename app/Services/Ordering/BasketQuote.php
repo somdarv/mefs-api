@@ -102,9 +102,22 @@ final class BasketQuote
     /**
      * One quote per way of getting the food, each saying whether it is even possible.
      *
-     * An unavailable option carries a REASON rather than being omitted. "Shipping is not
-     * offered on this basket because it holds a cooked meal" is a sentence the checkout
-     * screen can show; a missing radio button is a mystery.
+     * ── OFFERED-BUT-UNAVAILABLE VS NOT OFFERED AT ALL ─────────────────────────
+     *
+     * An option that COULD apply to this basket and happens not to right now carries a
+     * REASON rather than being omitted: "Delivery is switched off at the moment" is a
+     * sentence the checkout screen can show, and a radio button that silently vanished when
+     * she flipped a setting is a mystery. That was the original rule and it still holds.
+     *
+     * But it was applied to a case it does not fit. Shipping on a basket holding a cooked
+     * meal is not unavailable — it is INAPPLICABLE, permanently, by what is in the basket. A
+     * customer ordering waakye and jollof was shown a greyed "Shipping" row explaining that
+     * cooked food cannot be shipped, which is a fact about a service they never asked for.
+     * It is the checkout equivalent of listing the sizes a shop does not stock.
+     *
+     * So composition decides whether an option is OFFERED, and state decides whether an
+     * offered one is AVAILABLE. Add a jar of jollof base to the basket and Shipping appears,
+     * which is the honest way for it to show up.
      *
      * @param  list<PricedLine>  $priced
      * @return list<array<string, mixed>>
@@ -117,9 +130,12 @@ final class BasketQuote
         $quotes = [];
 
         foreach (OrderType::cases() as $type) {
-            $unavailable = match (true) {
-                $type === OrderType::Shipping && ! $pantryOnly => 'Cooked food has to be collected or delivered on a cooking day.',
+            // Nothing in this basket can be posted, so posting is not one of the choices.
+            if ($type === OrderType::Shipping && ! $pantryOnly) {
+                continue;
+            }
 
+            $unavailable = match (true) {
                 $type === OrderType::Shipping && SystemSetting::get('pantry_shipping_enabled', true) !== true => 'Shipping is switched off at the moment.',
 
                 $type === OrderType::Delivery && SystemSetting::get('delivery_enabled', true) !== true => 'Delivery is switched off at the moment.',
