@@ -32,6 +32,19 @@ final class PaymentResource extends JsonResource
             'reference' => $payment->reference,
             'channel' => $payment->channel,
 
+            /*
+             * ⚠️ WHICH WALLET WAS CHARGED, WHICH IS NOT `contact_name`'s NUMBER. Storing this
+             * and never showing it would leave "which number did they try?" unanswerable — and
+             * that is the first question about a payment that did not land, which is the only
+             * kind of payment anybody opens this screen to look at.
+             *
+             * Null on an attempt that never named one: an admin-entered order paid later, or a
+             * rehearsal, which has no handset to reach.
+             */
+            'momo_phone' => $payment->momo_phone,
+            'momo_network' => $payment->momo_network?->value,
+            'network_label' => $payment->momo_network?->label(),
+
             'status' => $payment->status->value,
             'status_label' => $payment->status->label(),
 
