@@ -271,6 +271,42 @@ final class MomoOtpTest extends TestCase
     }
 
     /**
+     * ⚠️ THE ASSERTION EVERY OTHER RESOLVE TEST WAS MISSING, AND THE BUG THEY ALL LET THROUGH.
+     *
+     * The tests around this one fake a response and check what we do with it, so every one of
+     * them passed while the outgoing request was one the live endpoint refuses on sight:
+     * `account_number` was E.164, and Paystack answers `+` with 200 / `status: false` /
+     * "Account number should be numeric". A faked gateway agrees with whatever you send it, so
+     * the response-shaped tests could not have caught this and no amount of adding more of them
+     * would have. The only defence is asserting what went OUT.
+     *
+     * Verified against the live account before this was written: `+233592123054` is refused,
+     * `0592123054` resolves to a name.
+     */
+    public function test_the_lookup_sends_the_local_number_format_paystack_accepts(): void
+    {
+        $this->withKeys();
+
+        Http::fake(['*/bank/resolve*' => Http::response([
+            'status' => true,
+            'data' => ['account_name' => 'AMA SERWAA'],
+        ], 200)]);
+
+        // Sent as E.164, which is how every number is stored and therefore how the controller
+        // receives it. The conversion is the client's job, so this must still come out local.
+        $this->postJson('/api/v1/momo/resolve', ['phone' => '+233241234567'])
+            ->assertOk()
+            ->assertJsonPath('data.resolved', true);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'account_number=0241234567')
+                // Both spellings of the thing that broke it: raw, and percent-encoded.
+                && ! str_contains($request->url(), '+233')
+                && ! str_contains($request->url(), '%2B233');
+        });
+    }
+
+    /**
      * ⚠️ THE CASE THE PREFIX TABLE CANNOT HANDLE, and the reason this endpoint exists at all.
      * Ghana has had number portability since 2011: an 024 number can sit on any network. The
      * guess is tried, it fails, and the network that actually answers is the network the

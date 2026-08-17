@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Payments;
 
+use App\Support\GhanaPhone;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -103,18 +104,38 @@ final class PaystackClient
      * network's registered account name or it does not, which is an answer from the network
      * itself rather than a guess about it.
      *
-     * ⚠️ AND THE REQUEST SHAPE HAS NEVER MET THE LIVE GATEWAY. The endpoint, the `bank_code`
-     * spelling and the response keys come from Paystack's documentation, exactly like
-     * `SmsOnlineGhSender`. Everything that consumes this treats a failure as "we could not
-     * check" and falls through to the manual picker, so a wrong guess here costs a
-     * confirmation step and never a sale.
+     * ⚠️ `account_number` IS THE LOCAL `0XXXXXXXXX`, NEVER E.164, AND THAT COST US A RELEASE.
      *
+     * This took `$phone` straight through, and every caller hands it E.164 because that is the
+     * one storage format in the system. Paystack answers a `+` with a 200 carrying
+     * `status: false` and "Account number should be numeric" — so `call()` correctly reported
+     * `ok: false`, `MomoController` correctly moved on to the next network, all three correctly
+     * failed, and the endpoint correctly answered `unresolved`. Six correct steps on top of one
+     * impossible request, reported as "we could not check that number", which is exactly what a
+     * gateway outage looks like. Verified against the live account: `+233592123054` is refused
+     * and `0592123054` resolves.
+     *
+     * The conversion lives here rather than at the call site because this class is the only
+     * thing that is supposed to know what Paystack's wire looks like — the same reason
+     * `MomoNetwork::bankCode()` holds the upper-casing.
+     *
+     * ⚠️ THE CHARGE STILL SENDS E.164, DELIBERATELY. `mobile_money.phone` accepts it and the
+     * live attempts in `payments.payload` prove it. Two endpoints on one gateway want two
+     * formats; that is theirs, not ours, and neither call site should have to remember it.
+     *
+     * @param  string  $phone  E.164, as stored. Converted on the way out.
      * @return array{ok: bool, reason: string, data?: array<string, mixed>}
      */
     public function resolveMomo(string $phone, string $bankCode): array
     {
+        $local = GhanaPhone::local($phone);
+
+        if ($local === null) {
+            return ['ok' => false, 'reason' => 'unreadable_number'];
+        }
+
         return $this->call(fn () => $this->http()->get($this->url('/bank/resolve'), [
-            'account_number' => $phone,
+            'account_number' => $local,
             'bank_code' => $bankCode,
         ]), 'resolve');
     }
