@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\CheckoutSessionStatus;
+use App\Enums\MomoNetwork;
 use App\Enums\OrderSource;
 use App\Enums\OrderType;
 use App\Http\Resources\CheckoutSessionResource;
@@ -19,6 +20,7 @@ use App\Services\Ordering\BasketQuote;
 use App\Services\Ordering\OrderCreator;
 use App\Services\Ordering\OrderDraft;
 use App\Services\Ordering\OrderRefused;
+use App\Services\Payments\MomoInstruction;
 use App\Services\Payments\PaymentInitiator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -144,6 +146,21 @@ final class CheckoutSessionController extends Controller
             'gps_code' => ['nullable', 'string', 'max:40'],
             'delivery_note' => ['nullable', 'string', 'max:500'],
             'payment_method' => ['nullable', 'string', 'max:40'],
+
+            /*
+             * ⚠️ THE WALLET TO DEBIT, WHICH IS NOT `contact_phone`. The checkout screen
+             * pre-fills it from the contact number and lets the customer change it, because
+             * the person being rung and the person paying are allowed to be different people
+             * (see `MomoInstruction`).
+             *
+             * ⚠️ AND IT IS `nullable`, NOT `required`. A 422 here would throw away a placed
+             * order over a payment detail — the gate has already been run, the slot is there
+             * to be taken. Without it the order is created and `payment` comes back null, and
+             * the tracking page asks for a number. Law 7, again: a payment that cannot be
+             * started must not cost a sale.
+             */
+            'momo_phone' => ['nullable', 'string', new PhoneNumber],
+            'momo_network' => ['nullable', Rule::enum(MomoNetwork::class)],
         ]);
 
         $draft = new OrderDraft(
@@ -191,16 +208,20 @@ final class CheckoutSessionController extends Controller
         $session->save();
 
         /*
-         * Start the payment in the same round trip, so the customer goes straight from
-         * "place order" to Paystack rather than through an interstitial that exists only
-         * because the API needed two calls.
+         * Push the prompt in the same round trip, so the customer taps "place order" once and
+         * their phone buzzes. There is no interstitial and no redirect — nothing to bounce
+         * them to another origin holding an unpaid order.
          *
-         * ⚠️ AND IT CANNOT FAIL THE ORDER. `begin()` never throws: no keys, gateway down,
-         * timeout — all come back `unavailable`, `payment` is null, and the storefront falls
-         * back to "she'll be in touch about payment". That is exactly the state the system
-         * is in until keys are supplied, and the order is real either way.
+         * ⚠️ AND IT CANNOT FAIL THE ORDER. `begin()` never throws: no keys, no number,
+         * gateway down, timeout — all come back `unavailable` or `refused`, `payment` is
+         * null, and the storefront falls back to "she'll be in touch about payment". That is
+         * exactly the state the system is in until keys are supplied, and the order is real
+         * either way.
          */
-        $attempt = $this->payments->begin($order);
+        $attempt = $this->payments->begin(
+            $order,
+            MomoInstruction::from($data['momo_phone'] ?? null, $data['momo_network'] ?? null),
+        );
 
         /*
          * ⚠️ `resolve()`, NOT `->additional()`.

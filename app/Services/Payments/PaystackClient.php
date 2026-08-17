@@ -14,8 +14,13 @@ use Throwable;
  *
  * Two calls are used:
  *
- *   initialize  create a transaction, get a hosted checkout URL
- *   verify      ask what actually happened to a reference
+ *   charge   push a mobile money prompt to a handset
+ *   verify   ask what actually happened to a reference
+ *
+ * ⚠️ THERE IS NO `initialize` AND NO HOSTED CHECKOUT. The customer never leaves the shop —
+ * they tap pay, a prompt arrives on their phone, and they approve it there. That is a
+ * deliberate narrowing: `/transaction/initialize` would also have bought us card payments,
+ * and giving those up is the price of never bouncing anyone to another origin mid-order.
  *
  * ⚠️ AMOUNTS ARE MINOR UNITS AT BOTH ENDS. Paystack wants pesewas for GHS, and pesewas is
  * how money is stored here. There is no conversion in the payment path at all, deliberately
@@ -35,34 +40,46 @@ final class PaystackClient
     }
 
     /**
-     * Start a transaction.
+     * Push a mobile money prompt to a phone.
      *
+     * ⚠️ NOTHING HAS BEEN PAID WHEN THIS RETURNS `ok`. A successful call means Paystack
+     * accepted the instruction and the handset is about to buzz — `data.status` comes back
+     * `pay_offline`, because the approval happens off our wire entirely. The truth arrives
+     * later, by webhook. Treating this response as a payment would mark every order paid the
+     * instant it was placed.
+     *
+     * @param  string  $provider  Paystack's own network code: `mtn` | `vod` | `atl`
      * @param  array<string, mixed>  $metadata
-     * @return array{ok: bool, reason: string, authorization_url?: string, data?: array<string, mixed>}
+     * @return array{ok: bool, reason: string, data?: array<string, mixed>}
      */
-    public function initialize(
+    public function charge(
         string $reference,
         int $amountMinor,
         string $email,
         string $currency,
-        string $callbackUrl,
+        string $phone,
+        string $provider,
         array $metadata = [],
     ): array {
-        return $this->call(fn () => $this->http()->post($this->url('/transaction/initialize'), [
+        return $this->call(fn () => $this->http()->post($this->url('/charge'), [
             'reference' => $reference,
             'amount' => $amountMinor,
             'email' => $email,
             'currency' => $currency,
-            'callback_url' => $callbackUrl,
+            'mobile_money' => [
+                'phone' => $phone,
+                'provider' => $provider,
+            ],
             'metadata' => $metadata,
-        ]), 'initialize');
+        ]), 'charge');
     }
 
     /**
      * ⚠️ THE ONLY THING THAT PROVES A PAYMENT HAPPENED, besides a signed webhook.
      *
-     * A browser landing on the callback URL proves nothing — anyone can visit it — so the
-     * return journey ends in a call to this, server to server, with our secret key.
+     * The customer's own browser telling us they approved the prompt proves nothing — they
+     * may have declined it, or never seen it — so the tracking page's answer comes from here,
+     * server to server, with our secret key.
      *
      * @return array{ok: bool, reason: string, data?: array<string, mixed>}
      */
@@ -76,7 +93,7 @@ final class PaystackClient
 
     /**
      * @param  callable(): Response  $request
-     * @return array{ok: bool, reason: string, authorization_url?: string, data?: array<string, mixed>}
+     * @return array{ok: bool, reason: string, data?: array<string, mixed>}
      */
     private function call(callable $request, string $operation): array
     {
@@ -87,9 +104,10 @@ final class PaystackClient
         try {
             $response = $request();
         } catch (Throwable $e) {
-            // A timeout is NOT a failure of the payment — the transaction may well exist at
-            // Paystack. Reported as its own reason so the caller can say "unavailable"
-            // rather than "declined", which are different sentences to a customer.
+            // A timeout is NOT a failure of the payment — the charge may well exist at
+            // Paystack, and the customer's phone may already be buzzing. Reported as its own
+            // reason so the caller can say "unavailable" rather than "declined", which are
+            // different sentences to a customer.
             Log::warning("Paystack {$operation} request failed", ['error' => $e->getMessage()]);
 
             return ['ok' => false, 'reason' => 'transport_error'];
@@ -122,14 +140,11 @@ final class PaystackClient
             return ['ok' => false, 'reason' => $reason];
         }
 
-        $data = is_array($body['data'] ?? null) ? $body['data'] : [];
-
-        return array_filter([
+        return [
             'ok' => true,
             'reason' => 'ok',
-            'authorization_url' => is_string($data['authorization_url'] ?? null) ? $data['authorization_url'] : null,
-            'data' => $data,
-        ], fn ($value) => $value !== null);
+            'data' => is_array($body['data'] ?? null) ? $body['data'] : [],
+        ];
     }
 
     private function http()

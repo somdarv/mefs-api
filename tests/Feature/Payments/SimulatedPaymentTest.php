@@ -95,8 +95,11 @@ final class SimulatedPaymentTest extends TestCase
         $this->simulateMode();
         $order = $this->order();
 
+        // ⚠️ NO NUMBER, AND IT STILL COMES BACK `prompted`. There is no handset to reach in a
+        // rehearsal, and refusing one for want of a wallet would make the mode unusable for
+        // exactly the walkthrough it exists to support.
         $attempt = app(PaymentInitiator::class)->begin($order);
-        $this->assertTrue($attempt->wasStarted());
+        $this->assertTrue($attempt->wasPrompted());
 
         $this->postJson("/api/v1/orders/{$order->tracking_token}/payment/simulate", [
             'reference' => $attempt->payment->reference,

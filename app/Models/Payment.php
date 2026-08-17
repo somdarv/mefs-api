@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\MomoNetwork;
 use App\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -32,6 +33,9 @@ class Payment extends Model
         'currency',
         'status',
         'channel',
+        'momo_phone',
+        'momo_network',
+        'prompt_expires_at',
         'fee',
         'settled_amount',
         'settled_at',
@@ -43,14 +47,30 @@ class Payment extends Model
     {
         return [
             'status' => PaymentStatus::class,
+            'momo_network' => MomoNetwork::class,
             'payload' => 'array',
             'is_simulated' => 'bool',
             'amount' => 'int',
             'fee' => 'int',
             'settled_amount' => 'int',
             'paid_at' => 'immutable_datetime',
+            'prompt_expires_at' => 'immutable_datetime',
             'settled_at' => 'immutable_datetime',
         ];
+    }
+
+    /**
+     * Is this attempt still waiting on a handset?
+     *
+     * ⚠️ PENDING AND UNEXPIRED ARE TWO DIFFERENT FACTS and both are needed. A prompt nobody
+     * answered stays `pending` forever — nothing sweeps it, deliberately — so a check on
+     * status alone would leave the tracking page saying "check your phone" a week later.
+     */
+    public function isAwaitingPrompt(): bool
+    {
+        return $this->status === PaymentStatus::Pending
+            && $this->prompt_expires_at !== null
+            && $this->prompt_expires_at->isFuture();
     }
 
     public function order(): BelongsTo

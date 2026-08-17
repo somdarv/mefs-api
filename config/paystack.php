@@ -27,16 +27,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Where the customer lands afterwards
+    | How long a prompt is worth waiting for
     |--------------------------------------------------------------------------
     |
-    | The order's tracking token is appended. ⚠️ Landing there is NOT proof of
-    | payment — anyone can visit that URL — which is why the page shows whatever
-    | the webhook has recorded rather than assuming success.
+    | The customer never leaves the shop: a mobile money charge pushes a prompt to
+    | their handset and they approve it there. This is how long the tracking page
+    | keeps saying "check your phone" before it offers to send another one.
+    |
+    | ⚠️ IT EXPIRES NOTHING AT PAYSTACK'S END and nothing sweeps the row. A prompt
+    | that is never answered leaves the attempt `pending` forever, which is
+    | harmless — the ORDER stays pending either way and she can still ring the
+    | customer. This only bounds how long a screen tells somebody to keep waiting.
+    |
+    | There was a `callback_url` here once, for the hosted checkout. It went when
+    | the redirect did; nothing lands back on the storefront from Paystack any
+    | more, so there is no return URL to get wrong.
     |
     */
 
-    'callback_url' => env('PAYSTACK_CALLBACK_URL', env('FRONTEND_URL', 'http://localhost:3000').'/orders'),
+    'prompt_ttl' => (int) env('PAYSTACK_PROMPT_TTL', 300),
 
     /*
     |--------------------------------------------------------------------------

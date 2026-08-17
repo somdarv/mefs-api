@@ -92,13 +92,31 @@ the feature, not a workaround.
 
 ## Payments
 
-Paystack. Hosted checkout for the customer, webhook for truth.
+Paystack **direct mobile money charge**, webhook for truth. There is no hosted checkout: the
+customer taps pay on our page, `POST /charge` pushes an approval prompt to their handset, and
+they answer it there.
 
-- A `payments` row **per attempt**, not per order.
+- ⚠️ **A prompt is not a payment.** `charge` returning `ok` means Paystack accepted the
+  instruction and the phone is about to buzz — `data.status` is `pay_offline`. `PaymentRecorder`
+  is the **single writer** of `orders.is_paid`; `PaymentInitiator` never marks anything paid,
+  not even when Paystack answers `success` outright, because two writers on that row means the
+  row lock, the amount check and the idempotency stop being one thing.
+- ⚠️ **`payments.momo_phone` is not `orders.contact_phone`.** One is who she rings when the
+  food is ready, the other is whose money moves. They diverge constantly in Ghana and must
+  never share a column — see `Services\Payments\MomoInstruction`.
+- ⚠️ **`MomoNetwork::forPhone()` is a guess.** Number portability means a prefix says who
+  *issued* a number. It pre-fills a picker; an explicit network from the request always wins.
+- A `payments` row **per attempt**, not per order — with its own `momo_phone`, so "we tried
+  two different numbers" survives.
+- ⚠️ **`PaystackClient` has no `initialize()`,** deliberately, and `PaystackTest` asserts it.
+  Re-adding one brings the redirect back, and cards with it.
 - The webhook sits **outside** the auth group (the gateway is not logged in), is verified by
   `x-paystack-signature` HMAC-SHA512, and is **idempotent** — a unique index on the Paystack
   reference makes a replay a no-op rather than a double credit. Assume duplicates.
-- A browser redirect is never proof of payment. Verify server-side.
+- The browser cannot see the approval — it happens on the handset. Verify server-side.
+- ⚠️ **`abandoned` from verify is not a failure while the prompt window is open.** A charge
+  Paystack has not seen answered can read as abandoned in the seconds before the customer taps
+  approve, and closing the attempt then races the approval they are halfway through.
 - **Admin-entered orders may hold a slot unpaid** until `slot_hold_expires_at`; a scheduled
   job then releases the capacity and flags the order. Customer-placed orders may not.
 

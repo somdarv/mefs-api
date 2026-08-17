@@ -11,14 +11,20 @@ use App\Models\Payment;
  *
  * ⚠️ THREE STATES, AND `unavailable` MUST NOT BLOCK A SALE (brief Law 7).
  *
- *   started      there is a hosted checkout page to send the customer to
- *   refused      Paystack said no — a bad amount, a disabled account
+ *   prompted     the handset is buzzing; nothing has been paid yet
+ *   refused      Paystack said no — a bad number, a bad amount, a disabled account
  *   unavailable  we could not tell: no keys configured, gateway down, timeout
+ *
+ * ⚠️ `prompted` IS NOT `paid`, AND THE NAME IS DOING WORK. The old `started` state handed
+ * back a checkout URL, and "started" was a fair description of a customer who had arrived at
+ * a payment page. A pushed prompt is different: the request succeeded, the money has not
+ * moved, and it may never move — the customer can ignore the prompt until it expires. Every
+ * screen downstream reads this as "waiting", never as "done"; the webhook is what settles it.
  *
  * The `unavailable` case is the one that matters most here, because it is the state the
  * system is in **right now**: no keys have been supplied. The order is still created, still
- * holds its slot for the payment window, and still appears in her back office — it simply
- * has no checkout link, and she arranges payment the way she does today.
+ * holds its slot for the payment window, and still appears in her back office — no prompt is
+ * sent, and she arranges payment the way she does today.
  *
  * A boolean would have collapsed "not configured yet" into "payment failed", and the
  * difference between those two is the difference between a working shop and a broken one.
@@ -29,13 +35,13 @@ final readonly class PaymentAttempt
         public string $status,
         public string $reason,
         public ?Payment $payment = null,
-        /** Paystack's hosted checkout page. Null unless `started`. */
-        public ?string $authorizationUrl = null,
+        /** Paystack's own sentence for the customer. Null unless `prompted`. */
+        public ?string $displayText = null,
     ) {}
 
-    public static function started(Payment $payment, string $authorizationUrl): self
+    public static function prompted(Payment $payment, ?string $displayText = null): self
     {
-        return new self('started', 'initialised', $payment, $authorizationUrl);
+        return new self('prompted', 'prompt_sent', $payment, $displayText);
     }
 
     public static function refused(string $reason, ?Payment $payment = null): self
@@ -48,30 +54,40 @@ final readonly class PaymentAttempt
         return new self('unavailable', $reason, $payment);
     }
 
-    public function wasStarted(): bool
+    public function wasPrompted(): bool
     {
-        return $this->status === 'started';
+        return $this->status === 'prompted';
     }
 
     /**
      * What the confirm endpoint puts on the order payload.
      *
-     * Null when there is nothing to send the customer to, so the storefront's check is
-     * `payment === null` rather than an inspection of a status string it would have to keep
-     * in sync with this file.
+     * Null when no prompt went out, so the storefront's check is `payment === null` rather
+     * than an inspection of a status string it would have to keep in sync with this file.
+     *
+     * ⚠️ `display_text` IS PAYSTACK'S SENTENCE AND MAY BE ABSENT. The screen carries its own
+     * copy and uses this only when it is there — a waiting state whose only instruction comes
+     * from a third party's optional field is a blank screen on the day they drop it.
      *
      * @return array<string, mixed>|null
      */
     public function toArray(): ?array
     {
-        if (! $this->wasStarted()) {
+        if (! $this->wasPrompted() || $this->payment === null) {
             return null;
         }
 
         return [
-            'reference' => $this->payment?->reference,
-            'authorization_url' => $this->authorizationUrl,
-            'amount' => $this->payment?->amount,
+            'reference' => $this->payment->reference,
+            'amount' => $this->payment->amount,
+            'momo_phone' => $this->payment->momo_phone,
+            'momo_network' => $this->payment->momo_network?->value,
+            'network_label' => $this->payment->momo_network?->label(),
+            'display_text' => $this->displayText,
+            'expires_at' => $this->payment->prompt_expires_at?->toIso8601String(),
+            // The rehearsal panel turns on this, not on a query parameter. A simulated
+            // attempt must never be indistinguishable from a real one on screen.
+            'is_simulated' => $this->payment->is_simulated,
         ];
     }
 }

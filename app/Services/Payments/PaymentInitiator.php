@@ -11,31 +11,57 @@ use App\Models\SystemSetting;
 use Illuminate\Support\Str;
 
 /**
- * Start a payment for an order.
+ * Start a payment for an order: push a mobile money prompt to the customer's handset.
  *
- * ⚠️ ONE `payments` ROW PER ATTEMPT, NOT PER ORDER. A customer who opens Paystack, wanders
- * off and comes back leaves two rows here and only one of them completed. Modelling it as
- * one row per order means the second attempt overwrites the first, and the reconciliation
- * screen in M6 then cannot explain a settlement that mentions a reference the system has
- * forgotten.
+ * ⚠️ THE CUSTOMER NEVER LEAVES THE SHOP. There is no hosted checkout and no redirect — they
+ * tap pay, their phone buzzes, they approve it there. `PaystackClient` has no `initialize()`
+ * at all, so there is no second path that could quietly come back.
  *
- * ⚠️ AND IT NEVER THROWS. No keys, gateway down, timeout — all of them come back as
- * `unavailable`, the order stands, and she arranges payment the way she does today. Law 7:
- * a check that cannot be evaluated must not block a sale. That is not a hypothetical here;
- * it is the state the system is in until keys are supplied.
+ * ⚠️ A PROMPT IS NOT A PAYMENT. `charge` coming back `ok` means Paystack accepted the
+ * instruction and the handset is about to ring; the money moves — or does not — minutes
+ * later, off our wire entirely. Only `PaymentRecorder`, driven by the webhook or by a
+ * server-to-server verify, ever marks anything paid.
+ *
+ * ⚠️ ONE `payments` ROW PER ATTEMPT, NOT PER ORDER. A customer whose first prompt went to the
+ * wrong wallet tries again on another number, and both attempts are facts: the second row is
+ * what makes "we tried twice, on two different numbers" answerable at month end. Modelling it
+ * as one row per order means the second overwrites the first, and the reconciliation screen
+ * in M6 then cannot explain a settlement mentioning a reference the system has forgotten.
+ *
+ * ⚠️ AND IT NEVER THROWS. No keys, no number, gateway down, timeout — all of them come back
+ * as `unavailable` or `refused`, the ORDER stands, and she arranges payment the way she does
+ * today. Law 7: a check that cannot be evaluated must not block a sale. That is not a
+ * hypothetical here; it is the state the system is in until keys are supplied.
  */
 final class PaymentInitiator
 {
     public function __construct(private readonly PaystackClient $paystack) {}
 
-    public function begin(Order $order): PaymentAttempt
+    public function begin(Order $order, ?MomoInstruction $momo = null): PaymentAttempt
     {
         if ($order->is_paid) {
             return PaymentAttempt::refused('already_paid');
         }
 
         if (SystemSetting::get('payment_mode', 'live') === 'simulate') {
-            return $this->beginSimulated($order);
+            return $this->beginSimulated($order, $momo);
+        }
+
+        /*
+         * ⚠️ NO NUMBER MEANS NO PROMPT, AND THAT IS A REFUSAL RATHER THAN A CRASH.
+         *
+         * There is nowhere to send a prompt to, and there is no fallback screen to fall back
+         * to any more. Checkout always collects one — pre-filled from the contact number — so
+         * in practice this fires for an admin-entered order being paid later, where nobody has
+         * said which wallet to debit yet. The order is untouched; `payment` comes back null
+         * and the screen asks for a number.
+         *
+         * Deliberately NOT defaulted to `$order->contact_phone`. See `MomoInstruction`: the
+         * number she rings and the wallet that pays are different facts, and guessing that
+         * they are the same is how a prompt goes to someone who is not paying.
+         */
+        if ($momo === null) {
+            return PaymentAttempt::refused('momo_number_missing');
         }
 
         if (! $this->paystack->isConfigured()) {
@@ -44,19 +70,9 @@ final class PaymentInitiator
             return PaymentAttempt::unavailable('not_configured');
         }
 
-        $payment = Payment::query()->create([
-            'order_id' => $order->id,
-            'provider' => 'paystack',
-            'reference' => $this->reference($order),
-            // Straight from the ORDER, never from a request. The amount charged is the
-            // amount the server computed, and there is no path by which a client could
-            // influence it.
-            'amount' => $order->total,
-            'currency' => config('paystack.currency', 'GHS'),
-            'status' => PaymentStatus::Pending->value,
-        ]);
+        $payment = $this->attemptRow($order, $momo, provider: 'paystack', simulated: false);
 
-        $result = $this->paystack->initialize(
+        $result = $this->paystack->charge(
             reference: $payment->reference,
             amountMinor: $payment->amount,
             // Paystack requires an email and most of her customers do not have one on file.
@@ -64,10 +80,13 @@ final class PaymentInitiator
             // pretends to be the customer's — inventing `ama@gmail.com` would be worse.
             email: $this->email($order),
             currency: $payment->currency,
-            callbackUrl: rtrim(config('paystack.callback_url'), '/').'/'.$order->tracking_token,
+            phone: $momo->phone,
+            provider: $momo->network->value,
             metadata: [
                 'order_number' => $order->order_number,
                 'order_id' => $order->id,
+                // The number to RING, kept alongside the number being CHARGED precisely
+                // because they are allowed to differ.
                 'contact_phone' => $order->contact_phone,
             ],
         );
@@ -80,6 +99,9 @@ final class PaymentInitiator
 
             $payment->update([
                 'status' => $retryable ? PaymentStatus::Pending->value : PaymentStatus::Failed->value,
+                // The clock comes off a prompt that was never sent, so nothing downstream
+                // shows "check your phone" for a charge Paystack refused.
+                'prompt_expires_at' => null,
                 'payload' => ['error' => $reason],
             ]);
 
@@ -88,9 +110,39 @@ final class PaymentInitiator
                 : PaymentAttempt::refused($reason, $payment);
         }
 
-        $payment->update(['payload' => $result['data'] ?? []]);
+        $data = $result['data'] ?? [];
+        $payment->update(['payload' => $data]);
 
-        return PaymentAttempt::started($payment, (string) $result['authorization_url']);
+        /*
+         * ⚠️ EVERY NON-FAILED STATUS IS TREATED AS "WAITING", INCLUDING `success`.
+         *
+         * Ghana mobile money answers `pay_offline`: the customer approves on the handset and
+         * the outcome reaches us by webhook. Paystack can also answer `success` outright, and
+         * it is tempting to mark the order paid right here — but that would put a second
+         * writer on `orders.is_paid` alongside `PaymentRecorder`, which owns the row lock, the
+         * amount check and the idempotency. One writer, always. The tracking page's verify
+         * call fires on arrival and settles it a beat later through the path that checks.
+         *
+         * `failed` is the one status worth acting on, because there is nothing to wait for.
+         */
+        $status = is_string($data['status'] ?? null) ? $data['status'] : 'pay_offline';
+
+        if ($status === 'failed') {
+            $payment->update([
+                'status' => PaymentStatus::Failed->value,
+                'prompt_expires_at' => null,
+            ]);
+
+            return PaymentAttempt::refused(
+                is_string($data['message'] ?? null) ? $data['message'] : 'charge_failed',
+                $payment,
+            );
+        }
+
+        return PaymentAttempt::prompted(
+            $payment,
+            is_string($data['display_text'] ?? null) ? $data['display_text'] : null,
+        );
     }
 
     /**
@@ -104,33 +156,52 @@ final class PaymentInitiator
      * revenue as real, but the same class of lie. Anything that has touched simulation is
      * out of the numbers from the first moment it does.
      *
-     * The checkout URL points at our own storefront rather than Paystack's. That page offers
-     * "paid" and "failed", because the whole point of a rehearsal is to rehearse the sad
-     * path too — an order that cannot fail to pay has not been tested.
+     * ⚠️ IT REHEARSES THE REAL SHAPE. A simulated attempt comes back `prompted`, exactly like
+     * a live one, and the tracking page shows the same waiting state with the rehearsal panel
+     * on top of it. A rehearsal that skipped straight to a settle button would be rehearsing a
+     * flow no customer will ever see — and the sad path is half the reason to have one.
+     *
+     * A number is not required here. There is no handset to reach, and refusing a rehearsal
+     * for want of a wallet would make the mode unusable for exactly the walkthrough it exists
+     * to support.
      */
-    private function beginSimulated(Order $order): PaymentAttempt
+    private function beginSimulated(Order $order, ?MomoInstruction $momo): PaymentAttempt
     {
-        $payment = Payment::query()->create([
-            'order_id' => $order->id,
-            // NOT 'paystack'. A settlement import matching on provider must never pick these
-            // up, and a row claiming to be from a gateway it never reached is a lie the
-            // reconciliation screen would have to unpick later.
-            'provider' => 'simulated',
-            'is_simulated' => true,
-            'reference' => $this->reference($order),
-            'amount' => $order->total,
-            'currency' => config('paystack.currency', 'GHS'),
-            'status' => PaymentStatus::Pending->value,
-        ]);
+        $payment = $this->attemptRow($order, $momo, provider: 'simulated', simulated: true);
 
         $order->is_simulated = true;
         $order->save();
 
-        return PaymentAttempt::started(
-            $payment,
-            rtrim((string) config('paystack.callback_url'), '/')
-                .'/'.$order->tracking_token.'?simulate='.$payment->reference,
-        );
+        return PaymentAttempt::prompted($payment, 'Rehearsal — no prompt has been sent.');
+    }
+
+    /**
+     * The attempt row, before anyone has been asked for money.
+     *
+     * Written first, deliberately: if the charge call times out, the reference we would have
+     * used is already on disk and a settlement line naming it can still be matched to an
+     * order. A row created only on success loses exactly the transactions that are hardest to
+     * explain later.
+     */
+    private function attemptRow(Order $order, ?MomoInstruction $momo, string $provider, bool $simulated): Payment
+    {
+        return Payment::query()->create([
+            'order_id' => $order->id,
+            // ⚠️ 'simulated', NOT 'paystack', for a rehearsal. A settlement import matching on
+            // provider must never pick these up, and a row claiming to be from a gateway it
+            // never reached is a lie the reconciliation screen would have to unpick later.
+            'provider' => $provider,
+            'is_simulated' => $simulated,
+            'reference' => $this->reference($order),
+            // Straight from the ORDER, never from a request. The amount charged is the amount
+            // the server computed, and there is no path by which a client could influence it.
+            'amount' => $order->total,
+            'currency' => config('paystack.currency', 'GHS'),
+            'status' => PaymentStatus::Pending->value,
+            'momo_phone' => $momo?->phone,
+            'momo_network' => $momo?->network->value,
+            'prompt_expires_at' => now()->addSeconds((int) config('paystack.prompt_ttl', 300)),
+        ]);
     }
 
     /**
@@ -156,8 +227,8 @@ final class PaymentInitiator
      * ⚠️ THE DOMAIN MUST BE REAL, AND THIS IS THE BUG THAT TAUGHT US SO.
      *
      * It used to be a hardcoded `@orders.mefs.local`. Paystack validates the address and
-     * refuses a reserved TLD (RFC 6762), so every live `initialize` came back 400 "Invalid
-     * Email Address Passed" — which `begin()` correctly reports as unavailable, and which the
+     * refuses a reserved TLD (RFC 6762), so every live charge came back 400 "Invalid Email
+     * Address Passed" — which `begin()` correctly reports as unavailable, and which the
      * storefront correctly renders as "online payment isn't available right now". Three
      * correct steps built on one address that could never work, and the sentence on screen
      * pointed at the API keys, which were fine the whole time.
