@@ -33,6 +33,25 @@ enum MomoNetwork: string
     }
 
     /**
+     * The same three networks, in the spelling `/bank/resolve` wants.
+     *
+     * ⚠️ PAYSTACK USES TWO CASINGS FOR ONE THING. `POST /charge` takes `mobile_money.provider`
+     * lowercase (`mtn`); `GET /bank/resolve` takes `bank_code` uppercase (`MTN`). That is
+     * their inconsistency, not ours, and it lives here rather than at either call site so
+     * neither has to remember it.
+     */
+    public function bankCode(): string
+    {
+        return strtoupper($this->value);
+    }
+
+    /** Every network, for a resolve that has to try them all because the prefix lied. */
+    public static function all(): array
+    {
+        return self::cases();
+    }
+
+    /**
      * The network a number was ISSUED on.
      *
      * ⚠️ A GUESS, AND IT MUST STAY OVERRIDABLE. Ghana has had number portability since 2011,

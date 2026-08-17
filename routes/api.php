@@ -21,6 +21,7 @@ use App\Http\Controllers\CustomerOrderController;
 use App\Http\Controllers\CycleController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MenuController;
+use App\Http\Controllers\MomoController;
 use App\Http\Controllers\OrderCancellationController;
 use App\Http\Controllers\OrderPaymentController;
 use App\Http\Controllers\OrderTrackingController;
@@ -70,6 +71,19 @@ Route::middleware('throttle:60,1')->group(function (): void {
      * for an account first.
      */
     Route::post('waitlist', [WaitlistController::class, 'store'])->name('waitlist.store');
+
+    /*
+     * "Whose wallet is this?" — checked at checkout, before an order exists, which is why it
+     * lives out here rather than under `orders/{token}`.
+     *
+     * It answers with the registered account name so the customer confirms their own money is
+     * leaving from the right place, and it detects the real network by which one resolves —
+     * the prefix table cannot, because Ghana has number portability. Throttled: it takes a
+     * phone number and answers with a person's name, so it must not be usable as a directory.
+     */
+    Route::post('momo/resolve', [MomoController::class, 'resolve'])
+        ->middleware('throttle:8,1')
+        ->name('momo.resolve');
 
     // Login is unauthenticated by definition, and is the route most worth guessing at.
     // The controller additionally throttles per login+IP so one attacker cannot lock a
@@ -136,6 +150,17 @@ Route::middleware('throttle:60,1')->group(function (): void {
      */
     Route::post('orders/{token}/payment', [OrderPaymentController::class, 'start'])->name('orders.pay');
     Route::post('orders/{token}/payment/verify', [OrderPaymentController::class, 'verify'])->name('orders.pay.verify');
+    /*
+     * Hands Paystack the one-time code it asked for.
+     *
+     * Not every Ghana mobile money charge pushes a prompt: some answer `send_otp`, and until
+     * this route existed those charges sat unfinished forever while the screen told the
+     * customer to approve something that had never been sent. Throttled because it takes a
+     * short numeric code against a reference.
+     */
+    Route::post('orders/{token}/payment/otp', [OrderPaymentController::class, 'submitOtp'])
+        ->middleware('throttle:10,1')
+        ->name('orders.pay.otp');
     // Settles a rehearsal, and refuses unless `payment_mode` is `simulate` AND the payment
     // row is itself simulated. See the controller — it has four guards and they all matter.
     Route::post('orders/{token}/payment/simulate', [OrderPaymentController::class, 'simulate'])->name('orders.pay.simulate');

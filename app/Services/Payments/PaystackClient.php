@@ -75,6 +75,51 @@ final class PaystackClient
     }
 
     /**
+     * Finish a charge that asked for a one-time code.
+     *
+     * ⚠️ SOME GHANA MOBILE MONEY CHARGES DO NOT PUSH A PROMPT AT ALL. Paystack answers
+     * `send_otp`, texts the customer a code itself, and waits here. Until this call is made
+     * the charge simply sits — which is exactly what happened before this method existed:
+     * `PaymentInitiator` treated every non-`failed` status as "the handset is buzzing", so the
+     * customer was told to approve a prompt that was never sent while holding an OTP nothing
+     * would ever ask them for.
+     *
+     * @return array{ok: bool, reason: string, data?: array<string, mixed>}
+     */
+    public function submitOtp(string $reference, string $otp): array
+    {
+        return $this->call(fn () => $this->http()->post($this->url('/charge/submit_otp'), [
+            'reference' => $reference,
+            'otp' => $otp,
+        ]), 'submit_otp');
+    }
+
+    /**
+     * Whose wallet is this, actually?
+     *
+     * ⚠️ THIS IS THE ONLY HONEST NETWORK DETECTION WE HAVE. `MomoNetwork::forPhone()` reads a
+     * prefix table, and Ghana has had number portability since 2011 — the prefix says who
+     * ISSUED a number, not who carries it. Resolving against a network either returns that
+     * network's registered account name or it does not, which is an answer from the network
+     * itself rather than a guess about it.
+     *
+     * ⚠️ AND THE REQUEST SHAPE HAS NEVER MET THE LIVE GATEWAY. The endpoint, the `bank_code`
+     * spelling and the response keys come from Paystack's documentation, exactly like
+     * `SmsOnlineGhSender`. Everything that consumes this treats a failure as "we could not
+     * check" and falls through to the manual picker, so a wrong guess here costs a
+     * confirmation step and never a sale.
+     *
+     * @return array{ok: bool, reason: string, data?: array<string, mixed>}
+     */
+    public function resolveMomo(string $phone, string $bankCode): array
+    {
+        return $this->call(fn () => $this->http()->get($this->url('/bank/resolve'), [
+            'account_number' => $phone,
+            'bank_code' => $bankCode,
+        ]), 'resolve');
+    }
+
+    /**
      * ⚠️ THE ONLY THING THAT PROVES A PAYMENT HAPPENED, besides a signed webhook.
      *
      * The customer's own browser telling us they approved the prompt proves nothing — they

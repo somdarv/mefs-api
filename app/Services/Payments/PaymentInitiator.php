@@ -114,18 +114,26 @@ final class PaymentInitiator
         $payment->update(['payload' => $data]);
 
         /*
-         * ⚠️ EVERY NON-FAILED STATUS IS TREATED AS "WAITING", INCLUDING `success`.
+         * ⚠️ MOST NON-FAILED STATUSES MEAN "WAITING", INCLUDING `success` — BUT NOT ALL.
          *
-         * Ghana mobile money answers `pay_offline`: the customer approves on the handset and
-         * the outcome reaches us by webhook. Paystack can also answer `success` outright, and
-         * it is tempting to mark the order paid right here — but that would put a second
-         * writer on `orders.is_paid` alongside `PaymentRecorder`, which owns the row lock, the
-         * amount check and the idempotency. One writer, always. The tracking page's verify
-         * call fires on arrival and settles it a beat later through the path that checks.
+         * Ghana mobile money usually answers `pay_offline`: the customer approves on the
+         * handset and the outcome reaches us by webhook. Paystack can also answer `success`
+         * outright, and it is tempting to mark the order paid right here — but that would put
+         * a second writer on `orders.is_paid` alongside `PaymentRecorder`, which owns the row
+         * lock, the amount check and the idempotency. One writer, always.
          *
-         * `failed` is the one status worth acting on, because there is nothing to wait for.
+         * ⚠️ AND `send_otp` IS NOT WAITING AT ALL. THIS IS THE BUG THIS BLOCK USED TO HAVE.
+         *
+         * It used to inspect `failed` and treat literally everything else as a pushed prompt.
+         * On the networks and accounts that answer `send_otp`, Paystack has texted the
+         * customer a code and is blocked until `/charge/submit_otp` arrives — no prompt was
+         * sent, nothing is buzzing, and there is nothing on the handset to approve. The screen
+         * said "approve the prompt on your phone" while the customer held a code nobody would
+         * ever ask for, and the charge sat unfinished until it expired. Every symptom of a
+         * dead integration, produced by a single unhandled branch.
          */
         $status = is_string($data['status'] ?? null) ? $data['status'] : 'pay_offline';
+        $displayText = is_string($data['display_text'] ?? null) ? $data['display_text'] : null;
 
         if ($status === 'failed') {
             $payment->update([
@@ -139,10 +147,31 @@ final class PaymentInitiator
             );
         }
 
-        return PaymentAttempt::prompted(
-            $payment,
-            is_string($data['display_text'] ?? null) ? $data['display_text'] : null,
-        );
+        if ($status === 'send_otp') {
+            return PaymentAttempt::otpRequired($payment, $displayText);
+        }
+
+        /*
+         * ⚠️ THE REMAINING `send_*` STATUSES ARE CARD FLOWS AND MUST NOT SILENTLY WAIT EITHER.
+         *
+         * `send_pin`, `send_phone`, `send_birthday`, `send_address` and `open_url` belong to
+         * Paystack's card path, which this integration does not have and deliberately cannot
+         * reach — there is no `initialize()` and no redirect. If one ever arrives it means the
+         * charge went somewhere we do not understand, and the honest answer is a refusal that
+         * names it rather than a waiting screen for an approval that will never come. Same
+         * failure shape as `send_otp`, caught by construction this time.
+         */
+        if (str_starts_with($status, 'send_') || $status === 'open_url') {
+            $payment->update([
+                'status' => PaymentStatus::Failed->value,
+                'prompt_expires_at' => null,
+                'payload' => $data + ['error' => 'unsupported_status_'.$status],
+            ]);
+
+            return PaymentAttempt::refused('unsupported_status_'.$status, $payment);
+        }
+
+        return PaymentAttempt::prompted($payment, $displayText);
     }
 
     /**

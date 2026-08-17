@@ -44,6 +44,33 @@ final readonly class PaymentAttempt
         return new self('prompted', 'prompt_sent', $payment, $displayText);
     }
 
+    /**
+     * Paystack wants a one-time code before it will move the money.
+     *
+     * ⚠️ A FOURTH STATE, AND IT IS NOT `prompted`. On some Ghana networks and accounts the
+     * charge answers `send_otp`: Paystack texts the customer a code and waits for
+     * `/charge/submit_otp`. Nothing buzzes, nothing is pending on the handset, and there is
+     * nothing for the customer to approve. Folding it into `prompted` — which is what used to
+     * happen, because only `failed` was ever inspected — told people to approve a prompt that
+     * did not exist while the code they were actually holding went unasked-for, and the charge
+     * sat unfinished until it expired.
+     */
+    public static function otpRequired(Payment $payment, ?string $displayText = null): self
+    {
+        return new self('otp_required', 'otp_required', $payment, $displayText);
+    }
+
+    public function needsOtp(): bool
+    {
+        return $this->status === 'otp_required';
+    }
+
+    /** Either way the charge is live and the customer is being asked for something. */
+    public function isUnderway(): bool
+    {
+        return $this->wasPrompted() || $this->needsOtp();
+    }
+
     public static function refused(string $reason, ?Payment $payment = null): self
     {
         return new self('refused', $reason, $payment);
@@ -73,11 +100,16 @@ final readonly class PaymentAttempt
      */
     public function toArray(): ?array
     {
-        if (! $this->wasPrompted() || $this->payment === null) {
+        if (! $this->isUnderway() || $this->payment === null) {
             return null;
         }
 
         return [
+            // ⚠️ THE CLIENT BRANCHES ON THIS, not on the presence of the object. `prompted`
+            // means "watch the handset"; `otp_required` means "we need the code Paystack just
+            // texted you". Two completely different screens, and the difference is invisible
+            // in every other field here.
+            'state' => $this->status,
             'reference' => $this->payment->reference,
             'amount' => $this->payment->amount,
             'momo_phone' => $this->payment->momo_phone,

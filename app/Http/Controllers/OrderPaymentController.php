@@ -81,7 +81,7 @@ final class OrderPaymentController extends Controller
             'payment' => $attempt->toArray(),
             // Travels so the screen can tell "we need a number from you" apart from "the
             // gateway is down", which are different things to be told. Null on success.
-            'reason' => $attempt->wasPrompted() ? null : $attempt->reason,
+            'reason' => $attempt->isUnderway() ? null : $attempt->reason,
             'order' => new OrderResource($order->load('items')),
         ];
 
@@ -89,9 +89,76 @@ final class OrderPaymentController extends Controller
         // the system is in today, and it is not a failure of the customer's request — the
         // order stands and she arranges payment herself. Law 7: `unjudged` must not block a
         // sale.
-        return $attempt->wasPrompted()
-            ? ApiResponse::created($payload, 'Prompt sent')
+        //
+        // `isUnderway()` rather than `wasPrompted()`: a charge waiting on a one-time code has
+        // started just as much as one waiting on a handset, and reporting it as a failure to
+        // start would send the customer to the phone mid-payment.
+        return $attempt->isUnderway()
+            ? ApiResponse::created($payload, $attempt->needsOtp() ? 'Enter the code' : 'Prompt sent')
             : ApiResponse::success($payload, $this->sentenceFor($attempt->reason));
+    }
+
+    /**
+     * Hand Paystack the one-time code it asked for.
+     *
+     * ⚠️ THIS DOES NOT MARK ANYTHING PAID, and the temptation to is strong because the response
+     * often carries `status: success` outright. `PaymentRecorder` stays the single writer of
+     * `orders.is_paid` — it owns the row lock, the amount check and the idempotency, and a
+     * second writer here would mean a webhook arriving a beat later races it. The code goes
+     * up, and the existing verify path settles the order through the door that checks.
+     *
+     * Keyed on the tracking token and unauthenticated, like every other route on this
+     * controller: the person holding the code has no account.
+     */
+    public function submitOtp(Request $request, string $token): JsonResponse
+    {
+        $order = $this->find($token);
+
+        if ($order->is_paid) {
+            return $this->state($order, $this->latestPayment($order), 'This order is already paid.');
+        }
+
+        $data = $request->validate([
+            'reference' => ['required', 'string'],
+            'otp' => ['required', 'string', 'min:4', 'max:12'],
+        ]);
+
+        $payment = Payment::query()
+            ->where('order_id', $order->id)
+            ->where('reference', $data['reference'])
+            ->first();
+
+        // ⚠️ 404, NOT 403, ON A REFERENCE THAT IS NOT THIS ORDER'S. The tracking token is the
+        // whole credential on this surface, and confirming that a reference exists but belongs
+        // elsewhere is a fact worth nothing to the customer and something to anyone probing.
+        if ($payment === null) {
+            return ApiResponse::error('No payment to confirm.', 404);
+        }
+
+        $result = $this->paystack->submitOtp($payment->reference, $data['otp']);
+
+        if (($result['ok'] ?? false) !== true) {
+            $reason = (string) ($result['reason'] ?? 'unknown');
+
+            /*
+             * ⚠️ A WRONG CODE IS NOT A DEAD CHARGE. Paystack rejects the submission and keeps
+             * the charge open for another attempt, so the payment row is left exactly as it
+             * was — closing it here would turn a typo into a lost sale and force the customer
+             * to start a second charge for the same order.
+             */
+            return ApiResponse::error(
+                in_array($reason, ['transport_error', 'gateway_error'], true)
+                    ? 'We could not reach the payment network. Try that code again.'
+                    : 'That code was not accepted. Check it and try again.',
+                422,
+            );
+        }
+
+        $payment->update(['payload' => $result['data'] ?? []]);
+
+        // Straight into the same verify path the tracking page uses, so the order is settled
+        // by the one writer rather than by this method's reading of the response.
+        return $this->verify($token);
     }
 
     /**
@@ -112,10 +179,7 @@ final class OrderPaymentController extends Controller
     {
         $order = $this->find($token);
 
-        $payment = Payment::query()
-            ->where('order_id', $order->id)
-            ->orderByDesc('id')
-            ->first();
+        $payment = $this->latestPayment($order);
 
         if ($order->is_paid) {
             return $this->state($order, $payment, 'Paid');
@@ -276,6 +340,15 @@ final class OrderPaymentController extends Controller
             'already_paid' => 'This order is already paid.',
             default => 'Online payment is not available for this order.',
         };
+    }
+
+    /** The attempt the customer is currently waiting on — the newest one, always. */
+    private function latestPayment(Order $order): ?Payment
+    {
+        return Payment::query()
+            ->where('order_id', $order->id)
+            ->orderByDesc('id')
+            ->first();
     }
 
     private function find(string $token): Order
