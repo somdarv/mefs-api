@@ -46,7 +46,22 @@ return [
 
     'smsonlinegh' => [
         'key' => env('SMSONLINEGH_API_KEY', ''),
-        'sender_id' => env('SMSONLINEGH_SENDER_ID', 'Mefs'),
+
+        /*
+         * ⚠️ THE DEFAULT MUST BE AN APPROVED SENDER ID, AND `Mefs` WAS NOT ONE.
+         *
+         * `MefsCuisine` is registered with SMSOnlineGH and is the brand's real name;
+         * `mefs` is the package and database identifier and is never customer-facing
+         * (PRODUCT.md). It is also 11 characters, which is the alphanumeric sender ceiling
+         * exactly — there is no room to lengthen it.
+         *
+         * The default matters more here than defaults usually do, because an unapproved
+         * sender fails INVISIBLY: the gateway accepts any sender string at submit time and
+         * answers `HSHK_OK` with a batch reference, so `SmsResult` reports `sent` either way.
+         * Verified by sending under both `Mefs` and `MefsCuisine` — both were accepted, which
+         * is precisely why a wrong value here would never surface as an error.
+         */
+        'sender_id' => env('SMSONLINEGH_SENDER_ID', 'MefsCuisine'),
         'base_url' => env('SMSONLINEGH_BASE_URL', 'https://api.smsonlinegh.com'),
         'timeout' => (int) env('SMSONLINEGH_TIMEOUT', 10),
     ],
