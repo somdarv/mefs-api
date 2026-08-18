@@ -12,18 +12,40 @@ use Throwable;
 /**
  * SMSOnlineGH.
  *
- * ⚠️⚠️ THE REQUEST SHAPE BELOW IS UNCONFIRMED. ⚠️⚠️
+ * ── THE SHAPE, AND HOW IT WAS WRONG ───────────────────────────────────────────
  *
- * The endpoint path, the auth header format and the response keys are taken from their
- * public documentation and have **never been run against the live gateway**, because no API
- * key has been supplied. Everything around this class is finished and tested; this one
- * method is the seam where reality gets to disagree.
+ * ⚠️ THIS POSTED JSON, AND THE `/v5/` API TAKES ONLY FORM DATA. Their own "Request Basics"
+ * page is explicit: request data is `application/x-www-form-urlencoded`, key-value pairs
+ * separated by ampersands, and JSON is not accepted. This class sent `Http::asJson()` with a
+ * nested `messages[].destinations[].to` array invented from a misreading of the SDK docs — a
+ * body the gateway could never have parsed. It was never caught because every test fakes the
+ * response, and a faked gateway agrees with whatever you send it: `test_the_gateway_driver_
+ * reports_a_send` asserted the nested shape and passed, proving only that we are consistent
+ * with ourselves.
+ *
+ * The wire, per their documentation:
+ *
+ *   POST {base}/v5/message/sms/send
+ *   Content-Type: application/x-www-form-urlencoded
+ *   key=API_KEY&text=Hello&type=0&sender=SENDER_ID&to=0246314915,233242053072
+ *
+ * The credential goes in the BODY. Their docs allow three placements — query parameter,
+ * body parameter, or an `Authorization: key <API_KEY>` header — and the body is the one their
+ * canonical example uses, so it is the one with the least room to be subtly wrong at a seam
+ * that has never been exercised. One credential path, not two.
+ *
+ * ⚠️ STILL NOT VERIFIED AGAINST A LIVE KEY, and one thing in particular is open: this is a
+ * RESELLER account, and resellers may be issued their own API host rather than
+ * `api.smsonlinegh.com`. That is why `SMSONLINEGH_BASE_URL` is configuration and not a
+ * constant — confirm it in the reseller portal before blaming the payload.
  *
  * When the key arrives:
- *   1. Set `SMSONLINEGH_API_KEY` and confirm `SMSONLINEGH_BASE_URL`.
- *   2. Send one message to your own phone with `php artisan sms:test <number>`.
- *   3. If the shape is wrong, `buildPayload()` and `interpret()` are the only two places to
- *      change. Nothing else in the app knows what SMSOnlineGH looks like.
+ *   1. Set `SMSONLINEGH_API_KEY`, `SMSONLINEGH_SENDER_ID` and confirm `SMSONLINEGH_BASE_URL`.
+ *   2. Set `SMS_DRIVER=smsonlinegh`. Anything else, or a blank key, silently uses the log
+ *      driver — see `AppServiceProvider::bindSmsSender()`.
+ *   3. Send one message to your own phone with `php artisan sms:test <number>`.
+ *   4. If the shape is still wrong, `buildPayload()` and `interpret()` are the only two places
+ *      to change. Nothing else in the app knows what SMSOnlineGH looks like.
  *
  * That containment is the whole reason for the driver interface. The rest of the system
  * talks to `SmsSender` and cannot tell the difference.
@@ -46,13 +68,9 @@ final class SmsOnlineGhSender implements SmsSender
         }
 
         try {
-            $response = Http::asJson()
-                ->withHeaders([
-                    // ⚠️ UNCONFIRMED. Their docs show a `key` header; some of their examples
-                    // show `Authorization: key <api-key>`. If auth fails with a valid key,
-                    // this line is the first thing to try changing.
-                    'Authorization' => 'key '.$this->apiKey,
-                ])
+            // ⚠️ `asForm()`, NEVER `asJson()`. The `/v5/` API parses only
+            // `application/x-www-form-urlencoded`; JSON is not accepted at all.
+            $response = Http::asForm()
                 ->timeout($this->timeout)
                 ->post(rtrim($this->baseUrl, '/').'/v5/message/sms/send', $this->buildPayload($to, $message));
         } catch (Throwable $e) {
@@ -68,21 +86,28 @@ final class SmsOnlineGhSender implements SmsSender
     }
 
     /**
-     * ⚠️ UNCONFIRMED SHAPE. See the class docblock.
+     * Five flat parameters, exactly as their documented example sends them.
      *
-     * @return array<string, mixed>
+     * ⚠️ NOTHING HERE IS NESTED, and the previous nesting is what made the request
+     * unparseable. See the class docblock.
+     *
+     * @return array<string, string|int>
      */
     private function buildPayload(string $to, string $message): array
     {
         return [
-            'messages' => [[
-                // They expect the number without a leading `+`, per their examples. We store
-                // E.164 with one, so this is the only place the two conventions meet.
-                'text' => $message,
-                'type' => 0,
-                'sender' => $this->senderId,
-                'destinations' => [['to' => ltrim($to, '+')]],
-            ]],
+            // The credential travels as a body parameter, which is their canonical example.
+            'key' => $this->apiKey,
+            'text' => $message,
+            // `0` is plain text. Their other types are for flash and unicode messages, which
+            // nothing here sends.
+            'type' => 0,
+            'sender' => $this->senderId,
+            // ⚠️ NO LEADING `+`. Storage is E.164 and their examples take `233242053072` or
+            // the local `0246314915`; this is the one place the two conventions meet. The
+            // parameter is comma-separated for multiple recipients — we send exactly one, so
+            // that every result maps to one customer and one failure.
+            'to' => ltrim($to, '+'),
         ];
     }
 
@@ -127,7 +152,14 @@ final class SmsOnlineGhSender implements SmsSender
             return SmsResult::refused((string) $label);
         }
 
-        $reference = $body['data']['messages'][0]['id'] ?? null;
+        /*
+         * ⚠️ `data.batch`, NOT `data.messages[0].id`. Their response documentation puts the
+         * submission reference on the batch; the old path was part of the same invented
+         * nesting as the payload and would have read null forever. Null is survivable here —
+         * the message is still sent, we just lose the handle for chasing it later — which is
+         * precisely why it would have gone unnoticed.
+         */
+        $reference = $body['data']['batch'] ?? null;
 
         return SmsResult::sent(is_string($reference) ? $reference : null);
     }

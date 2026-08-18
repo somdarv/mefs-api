@@ -286,21 +286,66 @@ final class SmsTest extends TestCase
         return new SmsOnlineGhSender('test-key', 'Mefs', 'https://api.smsonlinegh.com');
     }
 
+    /**
+     * The response body below is copied from a real HSHK_OK answered by the live account on
+     * 2026-08-18, not composed from the documentation.
+     */
     public function test_the_gateway_driver_reports_a_send(): void
     {
         Http::fake(['*' => Http::response([
-            'handshake' => ['label' => 'HSHK_OK'],
-            'data' => ['messages' => [['id' => 'abc-123']]],
+            'handshake' => ['id' => 0, 'label' => 'HSHK_OK'],
+            'data' => ['batch' => '43cba60160c739462c57777614c93eda'],
         ], 200)]);
 
         $result = $this->gateway()->send('+233241234567', 'hello');
 
         $this->assertTrue($result->wasSent());
-        $this->assertSame('abc-123', $result->reference);
+        // ⚠️ `data.batch`. This read `data.messages[0].id` and would have been null forever —
+        // survivable, invisible, and therefore permanent.
+        $this->assertSame('43cba60160c739462c57777614c93eda', $result->reference);
+    }
 
-        // The number goes without the leading `+`, per their examples — the one place our
-        // E.164 convention and theirs meet.
-        Http::assertSent(fn ($request) => $request['messages'][0]['destinations'][0]['to'] === '233241234567');
+    /**
+     * ⚠️ THE TEST THAT WAS MISSING, AND THE BUG IT WOULD HAVE CAUGHT.
+     *
+     * This driver posted `Http::asJson()` with a nested `messages[].destinations[].to` array
+     * for its whole life. The `/v5/` API parses only form data, so the gateway could never
+     * have read a single one of those requests — and the old version of the test above
+     * asserted that exact nesting and passed, because a faked gateway agrees with whatever you
+     * send it. Response-shaped tests cannot catch a request-shaped bug.
+     *
+     * So this asserts the wire: form-encoded, five flat parameters, credential in the body,
+     * number with no `+`, and nothing nested anywhere.
+     */
+    public function test_the_request_is_form_encoded_and_flat_because_json_is_not_accepted(): void
+    {
+        Http::fake(['*' => Http::response(['handshake' => ['label' => 'HSHK_OK']], 200)]);
+
+        $this->gateway()->send('+233241234567', 'hello');
+
+        Http::assertSent(function ($request) {
+            $this->assertStringContainsString(
+                'application/x-www-form-urlencoded',
+                $request->header('Content-Type')[0] ?? '',
+                'The v5 API parses only form data. JSON is silently unreadable to it.',
+            );
+
+            // The credential is a body parameter, which is their canonical example. One
+            // credential path, so an auth failure has exactly one place to be wrong.
+            $this->assertSame('test-key', $request['key']);
+            $this->assertSame('hello', $request['text']);
+            $this->assertSame('Mefs', $request['sender']);
+            $this->assertSame('0', (string) $request['type']);
+
+            // E.164 in storage, no leading `+` on the wire — the one place the two
+            // conventions meet.
+            $this->assertSame('233241234567', $request['to']);
+
+            // The shape that could never work, asserted absent rather than merely unused.
+            $this->assertArrayNotHasKey('messages', $request->data());
+
+            return true;
+        });
     }
 
     /**
