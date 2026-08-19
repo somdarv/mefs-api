@@ -34,21 +34,30 @@ use Throwable;
  * canonical example uses, so it is the one with the least room to be subtly wrong at a seam
  * that has never been exercised. One credential path, not two.
  *
- * ⚠️ STILL NOT VERIFIED AGAINST A LIVE KEY, and one thing in particular is open: this is a
- * RESELLER account, and resellers may be issued their own API host rather than
- * `api.smsonlinegh.com`. That is why `SMSONLINEGH_BASE_URL` is configuration and not a
- * constant — confirm it in the reseller portal before blaming the payload.
+ * ── VERIFIED LIVE, 2026-08-18 ──────────────────────────────────────────────────
  *
- * When the key arrives:
- *   1. Set `SMSONLINEGH_API_KEY`, `SMSONLINEGH_SENDER_ID` and confirm `SMSONLINEGH_BASE_URL`.
- *   2. Set `SMS_DRIVER=smsonlinegh`. Anything else, or a blank key, silently uses the log
- *      driver — see `AppServiceProvider::bindSmsSender()`.
- *   3. Send one message to your own phone with `php artisan sms:test <number>`.
- *   4. If the shape is still wrong, `buildPayload()` and `interpret()` are the only two places
- *      to change. Nothing else in the app knows what SMSOnlineGH looks like.
+ * Run against the real reseller account, not composed from the documentation:
  *
- * That containment is the whole reason for the driver interface. The rest of the system
- * talks to `SmsSender` and cannot tell the difference.
+ *   GET  /v5/account/balance     → handshake HSHK_OK
+ *   POST /v5/message/sms/send    → sent, with a `data.batch` reference
+ *
+ * Which settled two open questions. The reseller account uses the standard
+ * `api.smsonlinegh.com` — no white-label host — and the response envelope
+ * `{handshake:{id,label},data:{…}}` is exactly what `interpret()` already expected, so the
+ * parts of this class written from documentation that were right stayed right.
+ * `SMSONLINEGH_BASE_URL` remains configuration anyway, because that is a property of the
+ * account and not of the code.
+ *
+ * ⚠️ WHAT CANNOT BE VERIFIED FROM IN HERE IS THE SENDER ID. The gateway validates nothing
+ * about `sender` at submit time: sending under an unregistered `Mefs` and an approved
+ * `MefsCuisine` both returned HSHK_OK with a batch reference. So `SmsResult` reports `sent`
+ * either way and no return value this class produces can tell you the sender is wrong — only
+ * the text on a handset can. See the default in `config/sms.php`.
+ *
+ * If the shape ever needs changing, `buildPayload()` and `interpret()` are the only two
+ * places. Nothing else in the app knows what SMSOnlineGH looks like, and that containment is
+ * the whole reason for the driver interface — the rest of the system talks to `SmsSender` and
+ * cannot tell the difference.
  */
 final class SmsOnlineGhSender implements SmsSender
 {
@@ -58,6 +67,15 @@ final class SmsOnlineGhSender implements SmsSender
         private readonly string $baseUrl,
         private readonly int $timeout = 10,
     ) {}
+
+    /**
+     * Handshake labels meaning "our credentials are wrong", never "this message is wrong".
+     *
+     * An explicit list rather than a substring test for `AUTH`: a sender-approval rejection
+     * would also contain that string, and that one must NOT be retried, because no amount of
+     * waiting fixes a sender ID nobody has registered.
+     */
+    private const CREDENTIAL_FAILURES = ['HSHK_ERR_UA_AUTH'];
 
     public function send(string $to, string $message): SmsResult
     {
@@ -149,6 +167,23 @@ final class SmsOnlineGhSender implements SmsSender
         $label = is_array($handshake) ? ($handshake['label'] ?? null) : null;
 
         if (is_string($label) && $label !== 'HSHK_OK') {
+            /*
+             * ⚠️ AN AUTH FAILURE ARRIVES AS A 200, WHICH MAKES THE 401/403 BRANCH ABOVE DEAD
+             * CODE ON THIS GATEWAY. Verified against a deliberately revoked key: the send
+             * endpoint answers HTTP 200 with
+             * `{"handshake":{"id":1203,"label":"HSHK_ERR_UA_AUTH"},"data":null}`.
+             *
+             * Falling through to the generic `refused` below would mark the message
+             * permanently undeliverable and `SendSms` would discard it instead of retrying, so
+             * every queued order confirmation and every login code in flight during a key
+             * rotation would be destroyed — silently, and for a reason that has nothing to do
+             * with the message. That is precisely what the 401/403 branch was written to
+             * prevent; it was aimed at a signal this gateway never sends.
+             */
+            if (in_array($label, self::CREDENTIAL_FAILURES, true)) {
+                return SmsResult::unavailable('rejected_credentials');
+            }
+
             return SmsResult::refused((string) $label);
         }
 

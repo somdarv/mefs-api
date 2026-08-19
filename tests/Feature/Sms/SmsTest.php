@@ -405,6 +405,48 @@ final class SmsTest extends TestCase
         $this->assertTrue($result->isRetryable());
     }
 
+    /**
+     * ⚠️ THE 401 BRANCH IS DEAD CODE ON THIS GATEWAY, AND THIS IS THE CASE THAT ACTUALLY HAPPENS.
+     *
+     * An auth failure comes back HTTP **200** with the verdict in the body. The response below
+     * is copied verbatim from a deliberately revoked key on 2026-08-18, not composed.
+     *
+     * Before the fix this fell through to the generic handshake check and returned `refused`,
+     * which `SendSms` does not retry — so every queued order confirmation and every login code
+     * in flight during a key rotation would have been discarded, silently, for a reason that
+     * has nothing to do with the message.
+     */
+    public function test_an_auth_failure_arrives_as_a_two_hundred_and_is_still_retryable(): void
+    {
+        Http::fake(['*' => Http::response([
+            'handshake' => ['id' => 1203, 'label' => 'HSHK_ERR_UA_AUTH'],
+            'data' => null,
+        ], 200)]);
+
+        $result = $this->gateway()->send('+233241234567', 'hello');
+
+        $this->assertSame('unavailable', $result->status);
+        $this->assertSame('rejected_credentials', $result->reason);
+        $this->assertTrue($result->isRetryable(), 'A rotated key must not destroy the queue.');
+    }
+
+    /**
+     * The counterpart, so the fix above cannot quietly become "retry every handshake failure".
+     * A message-level rejection is permanent: waiting does not conjure up a destination that
+     * does not exist, and retrying forever burns segments she pays for.
+     */
+    public function test_a_message_level_handshake_failure_is_still_refused(): void
+    {
+        Http::fake(['*' => Http::response([
+            'handshake' => ['id' => 0, 'label' => 'HSHK_ERR_MSG_DESTINATION'],
+        ], 200)]);
+
+        $result = $this->gateway()->send('+233241234567', 'hello');
+
+        $this->assertSame('refused', $result->status);
+        $this->assertFalse($result->isRetryable());
+    }
+
     public function test_a_driver_with_no_key_never_reaches_the_network(): void
     {
         Http::fake();
